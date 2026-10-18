@@ -1,0 +1,202 @@
+# 政府网站采集源配置
+# 第一版以通用规则抓取：先抓 base_url，再自动发现“通知公告/政策文件/人事任免/政务公开”等栏目。
+# 后续如果发现某个站点漏采，可以在 list_urls 里补充准确栏目地址。
+
+- name: 中华人民共和国农业农村部
+  base_url: https://www.moa.gov.cn/
+  region: 国家
+  department: 农业农村
+  list_urls: []
+
+- name: 江苏省农业农村厅
+  base_url: https://nynct.jiangsu.gov.cn/
+  region: 江苏
+  department: 农业农村
+  list_urls: []
+
+- name: 湖北省农业农村厅
+  base_url: https://nyt.hubei.gov.cn/
+  region: 湖北
+  department: 农业农村
+  list_urls: []
+
+- name: 黑龙江省农业农村厅
+  base_url: https://nynct.hlj.gov.cn/
+  region: 黑龙江
+  department: 农业农村
+  list_urls: []
+
+- name: 南通市农业农村局
+  base_url: https://nyncj.nantong.gov.cn/
+  region: 南通
+  department: 农业农村
+  list_urls: []
+
+- name: 国家发展和改革委员会
+  base_url: http://www.ndrc.gov.cn/
+  region: 国家
+  department: 发改
+  list_urls: []
+
+- name: 江苏省发展和改革委员会
+  base_url: https://fzggw.jiangsu.gov.cn/
+  region: 江苏
+  department: 发改
+  list_urls: []
+
+- name: 湖北省发展和改革委员会
+  base_url: https://fgw.hubei.gov.cn/
+  region: 湖北
+  department: 发改
+  # 湖北政务站点常对 requests 返回 412，补充明确栏目页并配合浏览器兜底。
+  list_urls:
+    - https://fgw.hubei.gov.cn/fbjd/zc/zcwj/h5_3.shtml
+    - https://fgw.hubei.gov.cn/fbjd/zc/gfwj/h5_7.shtml
+    - https://fgw.hubei.gov.cn/fbjd/zc/gfwj/h5_1.shtml
+    - https://fgw.hubei.gov.cn/fbjd/zc/zcjd/h5_82.shtml
+
+- name: 黑龙江省发展和改革委员会
+  base_url: http://drc.hlj.gov.cn/
+  region: 黑龙江
+  department: 发改
+  list_urls: []
+
+- name: 南通市发展和改革委员会
+  base_url: https://fgw.nantong.gov.cn/
+  region: 南通
+  department: 发改
+  list_urls: []
+
+- name: 中华人民共和国生态环境部
+  base_url: http://www.mee.gov.cn/
+  region: 国家
+  department: 生态环境
+  list_urls: []
+
+- name: 江苏省生态环境厅
+  base_url: http://sthjt.jiangsu.gov.cn/
+  region: 江苏
+  department: 生态环境
+  list_urls: []
+
+- name: 湖北省生态环境厅
+  base_url: http://sthjt.hubei.gov.cn/
+  region: 湖北
+  department: 生态环境
+  # 该站首页可能对 requests 返回 412，可补充可检索到的栏目页提高召回。
+  list_urls:
+    - https://sthjt.hubei.gov.cn/fbjd/zc/zcwj/
+    - https://sthjt.hubei.gov.cn/fbjd/zc/zcjd/
+    - https://sthjt.hubei.gov.cn/fbjd/zc/zcwj/sthjt/tzgg/
+    - https://sthjt.hubei.gov.cn/fbjd/zc/zcwj/sthjt/ehf/
+    - https://sthjt.hubei.gov.cn/fbjd/xxgkml/qtzdgknr/zczx/
+    - https://sthjt.hubei.gov.cn/hjsj/ztzl/jsxmhp/
+
+- name: 黑龙江省生态环境厅
+  base_url: http://sthj.hlj.gov.cn/
+  region: 黑龙江
+  department: 生态环境
+  # 该站可能对 requests 返回 403/重定向异常，必要时使用 --browser-fallback。
+  list_urls: []
+
+- name: 南通市生态环境局
+  base_url: http://sthjj.nantong.gov.cn/
+  region: 南通
+  department: 生态环境
+  list_urls: []
+
+- name: 中华人民共和国应急管理部
+  base_url: http://www.mem.gov.cn/
+  region: 国家
+  department: 应急管理
+  list_urls: []
+
+- name: 江苏省应急管理厅
+  base_url: http://yjglt.jiangsu.gov.cn/
+  region: 江苏
+  department: 应急管理
+  list_urls: []
+
+- name: 湖北省应急管理厅
+  base_url: https://yjt.hubei.gov.cn/
+  region: 湖北
+  department: 应急管理
+  # 湖北政务站点常对 requests 返回 412，补充明确栏目页并配合浏览器兜底。
+  list_urls:
+    - https://yjt.hubei.gov.cn/fbjd/zc/zcfg/
+    - https://yjt.hubei.gov.cn/fbjd/zc/gfwj/
+    - https://yjt.hubei.gov.cn/fbjd/zc/zcjd/
+    - https://yjt.hubei.gov.cn/fbjd/xxgkml/zfcg/
+    - https://yjt.hubei.gov.cn/fzlm/fzgn/zzms/index.shtml
+
+- name: 黑龙江省应急管理厅
+  base_url: http://yjgl.hlj.gov.cn/
+  region: 黑龙江
+  department: 应急管理
+  list_urls: []
+
+- name: 南通市应急管理局
+  base_url: http://yjgl.nantong.gov.cn/
+  region: 南通
+  department: 应急管理
+  list_urls: []
+
+- name: 中华人民共和国工业和信息化部
+  base_url: https://www.miit.gov.cn/
+  region: 国家
+  department: 工信
+  list_urls: []
+
+- name: 江苏省工业和信息化厅
+  base_url: http://gxt.jiangsu.gov.cn/
+  region: 江苏
+  department: 工信
+  list_urls: []
+
+- name: 湖北省经济和信息化厅
+  base_url: https://jxt.hubei.gov.cn/
+  region: 湖北
+  department: 经信
+  list_urls: []
+
+- name: 黑龙江省工业和信息化厅
+  base_url: http://gxt.hlj.gov.cn/
+  region: 黑龙江
+  department: 工信
+  list_urls: []
+
+- name: 南通市工业和信息化局
+  base_url: https://gxj.nantong.gov.cn/
+  region: 南通
+  department: 工信
+  list_urls: []
+
+- name: 中华人民共和国财政部
+  base_url: http://www.mof.gov.cn/
+  region: 国家
+  department: 财政
+  list_urls: []
+
+- name: 江苏省财政厅
+  base_url: http://czt.jiangsu.gov.cn/
+  region: 江苏
+  department: 财政
+  list_urls: []
+
+- name: 湖北省财政厅
+  base_url: https://czt.hubei.gov.cn/
+  region: 湖北
+  department: 财政
+  list_urls: []
+
+- name: 黑龙江省财政厅
+  base_url: http://czt.hlj.gov.cn/
+  region: 黑龙江
+  department: 财政
+  list_urls: []
+
+- name: 南通市财政局
+  base_url: http://czj.nantong.gov.cn/
+  region: 南通
+  department: 财政
+  list_urls: []

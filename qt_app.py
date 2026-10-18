@@ -7,6 +7,9 @@ import queue
 import subprocess
 import sys
 import threading
+import time
+import traceback
+import uuid
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -327,6 +330,11 @@ class GovPolicyQtApp(QWidget):
         env["PYTHONUTF8"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUNBUFFERED"] = "1"
+        worker_log = None
+        if getattr(sys, "frozen", False):
+            worker_log = RUNTIME_DIR / f"worker-{uuid.uuid4().hex}.log"
+            worker_log.touch()
+            env["GOV_REPORT_WORKER_LOG"] = str(worker_log)
         if self.api_key.text().strip():
             env["GOV_REPORT_OPENAI_API_KEY"] = self.api_key.text().strip()
         if self.api_url.text().strip():
@@ -335,16 +343,35 @@ class GovPolicyQtApp(QWidget):
             env["GOV_REPORT_OPENAI_MODEL"] = self.model_box.currentText().strip()
 
         self._append_log("\n>>> 启动任务\n")
-        self.process = subprocess.Popen(cmd, cwd=str(APP_DIR), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=False, env=env)
+        self.process = subprocess.Popen(
+            cmd, cwd=str(APP_DIR),
+            stdout=subprocess.DEVNULL if worker_log else subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=False, env=env,
+        )
         self.run_button.setEnabled(False)
         self.stop_button.setEnabled(True)
-        threading.Thread(target=self._read_process_output, daemon=True).start()
+        threading.Thread(target=self._read_process_output, args=(self.process, worker_log), daemon=True).start()
 
-    def _read_process_output(self) -> None:
-        assert self.process and self.process.stdout
-        for line in self.process.stdout:
-            self.log_queue.put(self._decode_process_line(line))
-        code = self.process.wait()
+    def _read_process_output(self, process: subprocess.Popen, worker_log: Path | None = None) -> None:
+        if worker_log:
+            # Windowed executables have no Python stdout, even with a parent pipe.
+            with worker_log.open(encoding="utf-8", errors="replace") as stream:
+                while True:
+                    line = stream.readline()
+                    if line:
+                        self.log_queue.put(line)
+                    elif process.poll() is not None:
+                        self.log_queue.put(stream.read())
+                        break
+                    else:
+                        time.sleep(0.1)
+        else:
+            assert process.stdout
+            for line in process.stdout:
+                self.log_queue.put(self._decode_process_line(line))
+        code = process.wait()
+        if worker_log and code == 0:
+            worker_log.unlink(missing_ok=True)
         self.log_queue.put(f"\n>>> 任务结束，退出码：{code}\n")
         self.log_queue.put("__DONE__")
 
@@ -424,14 +451,21 @@ class GovPolicyQtApp(QWidget):
 
 
 def run_cli_from_frozen() -> None:
+    log_path = os.getenv("GOV_REPORT_WORKER_LOG")
+    if log_path:
+        sys.stdout = sys.stderr = open(log_path, "w", encoding="utf-8", buffering=1)
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
-    from main import main
+    try:
+        from main import main
 
-    main()
+        main()
+    except Exception:
+        traceback.print_exc()
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

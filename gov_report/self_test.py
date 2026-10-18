@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import traceback
 from pathlib import Path
@@ -72,6 +75,32 @@ def run_self_test(result_path: Path) -> int:
             pdf = (root / "report.pdf").read_bytes()
             assert pdf.startswith(b"%PDF-") and url.encode("ascii") in pdf
             checks.append("pdf_export_and_title_link")
+
+            from qt_app import APP_DIR, RESOURCE_DIR
+
+            sources_path = root / "empty-sources.yaml"
+            sources_path.write_text("[]\n", encoding="utf-8")
+            manual_path = root / "empty-urls.txt"
+            manual_path.touch()
+            worker_log = root / "worker.log"
+            command = [sys.executable]
+            if not getattr(sys, "frozen", False):
+                command.append(str(APP_DIR / "qt_app.py"))
+            command.extend([
+                "--run-cli", "--start-date", "2026-06-01", "--end-date", "2026-06-07",
+                "--sources", str(sources_path), "--manual-urls", str(manual_path),
+                "--keywords", str(RESOURCE_DIR / "config" / "keywords.yaml"),
+                "--output-root", str(root / "cli-output"), "--no-llm", "--no-browser-fallback",
+            ])
+            environment = os.environ.copy()
+            environment["GOV_REPORT_WORKER_LOG"] = str(worker_log)
+            worker = subprocess.run(command, env=environment, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, timeout=60)
+            log = worker_log.read_text(encoding="utf-8") if worker_log.exists() else ""
+            assert worker.returncode == 0, log or worker.stdout.decode("utf-8", errors="replace")
+            assert "共命中 0 条" in log, "CLI task did not write its UTF-8 progress log"
+            assert list((root / "cli-output").rglob("*.pdf")), "CLI task did not create a PDF"
+            checks.append("cli_worker_progress_and_pdf")
         result["ok"] = True
     except Exception:
         result["error"] = traceback.format_exc()

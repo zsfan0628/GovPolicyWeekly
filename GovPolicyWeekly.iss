@@ -22,7 +22,9 @@ PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64
 
 [Languages]
+#if FileExists(AddBackslash(CompilerPath) + "Languages\ChineseSimplified.isl")
 Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+#endif
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]

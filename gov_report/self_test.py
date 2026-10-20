@@ -18,6 +18,7 @@ def run_self_test(result_path: Path) -> int:
     try:
         import main
         from PySide6.QtCore import Qt
+        from PySide6.QtQuickControls2 import QQuickStyle
         from PySide6.QtWidgets import QApplication
         from openpyxl import load_workbook
 
@@ -29,6 +30,7 @@ def run_self_test(result_path: Path) -> int:
         assert start.utcoffset() == dt.timedelta(hours=8)
         checks.append("cli_imports_and_shanghai_timezone")
 
+        QQuickStyle.setStyle("Basic")
         qt = QApplication.instance() or QApplication([])
         original_loader = GovPolicyQtApp._load_settings
         GovPolicyQtApp._load_settings = lambda self: {}
@@ -47,6 +49,8 @@ def run_self_test(result_path: Path) -> int:
         window.close()
         qt.processEvents()
         checks.append("desktop_calendar_and_source_selection")
+        check_glass_workspace(qt)
+        checks.append("glass_workspace_and_real_controller")
 
         url = "https://example.com/policy?item=1&source=smoke"
         records = [{
@@ -108,3 +112,48 @@ def run_self_test(result_path: Path) -> int:
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     return 0 if result["ok"] else 1
+
+
+def check_glass_workspace(application) -> None:
+    from PySide6.QtCore import QEventLoop, QObject, QTimer, QUrl
+    from PySide6.QtQml import QQmlApplicationEngine
+    from ui_preview import Icons, Sources, SourceFilter, UI
+    from gov_report.desktop import DesktopController, SettingsStore
+    import shiboken6
+
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        store = SettingsStore(root / "settings.json", root / "no-legacy")
+        store.save({"use_llm": False, "reduced_motion": True, "output_root": str(root / "output")})
+        sources = Sources()
+        controller = DesktopController(sources, store)
+        source_filter = SourceFilter(sources)
+        manage_filter = SourceFilter(sources)
+        log_filter = SourceFilter(controller.logs, ("logTime", "level", "message"), dynamic=True)
+        engine = QQmlApplicationEngine()
+        engine.addImageProvider("icons", Icons())
+        warnings = []
+        engine.warnings.connect(lambda items: warnings.extend(item.toString() for item in items))
+        for name, value in {"preview": controller, "sources": sources, "sourceFilter": source_filter,
+                            "manageFilter": manage_filter, "logModel": log_filter, "reportModel": controller.reports}.items():
+            engine.rootContext().setContextProperty(name, value)
+        try:
+            engine.load(QUrl.fromLocalFile(str(UI / "Main.qml")))
+            assert engine.rootObjects(), "Glass workspace did not load"
+            window = engine.rootObjects()[0]
+            loop = QEventLoop()
+            QTimer.singleShot(600, loop.quit)
+            loop.exec()
+            assert window.property("wallpaperReady"), "Packaged wallpaper is missing"
+            assert window.findChild(QObject, "startButton").property("text") == "开始生成"
+            assert window.findChild(QObject, "apiKey").property("keyHidden")
+            assert window.findChild(QObject, "startDate").property("value")
+            assert not window.grabWindow().isNull(), "Glass workspace rendering is blank"
+            sources.toggle(0)
+            assert sources.selectedCount == sources.total - 1
+            assert not warnings, "\n".join(warnings)
+        finally:
+            controller.shutdown()
+            for obj in engine.rootObjects():
+                shiboken6.delete(obj)
+            shiboken6.delete(engine)

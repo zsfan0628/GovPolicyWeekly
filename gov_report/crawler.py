@@ -3,15 +3,17 @@ from __future__ import annotations
 import hashlib
 import re
 import traceback
+from collections import deque
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from .classifier import classify, contains_any, make_summary, extract_change_points
 from .llm_classifier import LLMClassifier
 from .date_utils import fmt_date, in_range
 from .http import HttpClient, sanitize_filename
-from .parser import Article, LinkItem, discover_channel_urls, extract_article, extract_links, is_probably_article_url, clean_text
+from .parser import (ATTACHMENT_EXTS, Article, LinkItem, discover_channel_urls, extract_article, extract_links,
+                     extract_pagination_urls, is_probably_article_url, clean_text)
 
 
 class GovCrawler:
@@ -20,8 +22,8 @@ class GovCrawler:
         sources: list[dict],
         keywords: dict[str, list[str]],
         output_dir: str | Path,
-        max_channels_per_source: int = 10,
-        max_detail_per_source: int = 80,
+        max_channels_per_source: int = 0,
+        max_detail_per_source: int = 0,
         download_attachments: bool = True,
         sleep: float = 0.5,
         verify_ssl: bool = True,
@@ -30,6 +32,7 @@ class GovCrawler:
         use_llm: bool = True,
         browser_fallback: bool = False,
         allow_rule_fallback: bool = False,
+        progress_callback: Callable[[dict], None] | None = None,
     ) -> None:
         self.sources = sources
         self.keywords = keywords
@@ -47,6 +50,11 @@ class GovCrawler:
         self.allow_rule_fallback = allow_rule_fallback
         self.llm_used_count = 0
         self.llm_cache_hit_count = 0
+        self.progress_callback = progress_callback
+
+    def progress(self, event: str, **data) -> None:
+        if self.progress_callback:
+            self.progress_callback({"event": event, **data})
 
     def crawl(self, start, end, source_name: str | None = None) -> list[dict]:
         selected_sources = [s for s in self.sources if not source_name or s["name"] == source_name]
@@ -56,12 +64,17 @@ class GovCrawler:
         all_records: list[dict] = []
         total = len(selected_sources)
         for idx, source in enumerate(selected_sources, 1):
+            self.progress("source_started", source=source.get("name", ""), index=idx, total=total)
             self.log(f"\n[采集进度] {idx}/{total} {source.get('name', '')}")
             try:
                 records = self.crawl_source(source, start, end)
                 all_records.extend(records)
             except Exception as e:
+                self.progress("error", source=source.get("name", ""), kind="source")
                 self.log(f"[ERROR] {source.get('name')} 采集失败: {e}\n{traceback.format_exc()}")
+            finally:
+                self.client.close_browser()
+                self.progress("source_finished", source=source.get("name", ""), index=idx, total=total)
         self.write_log()
         return dedupe_records(all_records)
 
@@ -70,39 +83,96 @@ class GovCrawler:
         base_url = source["base_url"]
         self.log(f"\n=== {name} ===")
 
-        list_urls = [base_url] + list(source.get("list_urls") or [])
-        # 自动发现栏目页
-        try:
-            html, final_url = self.client.fetch_text(base_url)
-            channels = discover_channel_urls(html, final_url, max_channels=self.max_channels_per_source)
-            list_urls.extend(channels)
-            self.log(f"发现栏目页 {len(channels)} 个")
-        except Exception as e:
-            self.log(f"首页读取失败: {base_url} | {e}")
-
-        list_urls = unique_keep_order(list_urls)
-        candidates: list[LinkItem] = []
-        for list_url in list_urls:
+        seeds = unique_keep_order([base_url] + list(source.get("list_urls") or []))
+        pending = deque((url, False, normalize_url_for_dedupe(url)) for url in seeds)
+        queued = {normalize_url_for_dedupe(url) for url in seeds}
+        navigation_keys = set(queued)
+        visited = set()
+        page_fingerprints: dict[str, set[str]] = {}
+        jcms_bridges = set()
+        channel_names = dict(source.get("channel_names") or {})
+        discovered = 0
+        list_count = 0
+        candidate_by_url: dict[str, LinkItem] = {}
+        while pending:
+            list_url, is_pagination, chain_key = pending.popleft()
+            key = normalize_url_for_dedupe(list_url)
+            if key in visited:
+                continue
+            visited.add(key)
             try:
                 html, final_url = self.client.fetch_text(list_url)
+                self.progress("page_processed", source=name, kind="list")
+                final_key = normalize_url_for_dedupe(final_url)
+                if final_key != key and final_key in visited:
+                    continue
+                visited.add(final_key)
                 links = extract_links(html, final_url, only_same_site=True)
                 # 把列表页URL写入候选上下文，便于判断“是否来自政策栏目”。
                 for link in links:
-                    link.context = f"{link.context} 列表页:{list_url} 最终列表页:{final_url}"
-                candidates.extend(links)
+                    link.context = f"{link.context} 栏目:{channel_names.get(list_url, '')} 列表页:{list_url} 最终列表页:{final_url}"
+                    candidate_by_url.setdefault(normalize_url_for_dedupe(link.url), link)
+                list_count += 1
                 self.log(f"列表页 {list_url} 提取链接 {len(links)} 条")
+                channels = discover_channel_urls(html, final_url, max_channels=0)
+                navigation_keys.update(normalize_url_for_dedupe(url) for url in channels)
+                for channel in channels:
+                    channel_key = normalize_url_for_dedupe(channel)
+                    if channel_key in queued or channel_key in visited:
+                        continue
+                    if self.max_channels_per_source > 0 and discovered >= self.max_channels_per_source:
+                        break
+                    queued.add(channel_key)
+                    pending.append((channel, False, channel_key))
+                    channel_names[channel] = next((x.title for x in links if x.url == channel), "")
+                    discovered += 1
+                    self.log(f"发现子栏目: {channel}")
+
+                next_urls = extract_pagination_urls(html, final_url)
+                navigation_keys.update(normalize_url_for_dedupe(url) for url in next_urls)
+                content_urls = sorted({
+                    x.url for x in links
+                    if normalize_url_for_dedupe(x.url) not in navigation_keys
+                    and self.should_fetch_candidate(x)
+                })
+                fingerprint = hashlib.sha256("\n".join(content_urls).encode()).hexdigest() if content_urls else ""
+                fingerprints = page_fingerprints.setdefault(chain_key, set())
+                repeated = bool(fingerprint and fingerprint in fingerprints)
+                if fingerprint:
+                    fingerprints.add(fingerprint)
+                # JCMS may return the inline first group once before advancing to the next group.
+                query = dict(parse_qsl(urlparse(final_url).query))
+                first_group = query.get("startrecord") == "1" or query.get("page") == "1"
+                bridge = repeated and first_group and chain_key not in jcms_bridges and urlparse(final_url).path == "/module/web/jpage/dataproxy.jsp"
+                if bridge:
+                    jcms_bridges.add(chain_key)
+                if is_pagination and repeated and not bridge:
+                    self.log(f"分页内容重复，停止继续翻页: {final_url}")
+                    continue
+                for next_url in next_urls:
+                    next_key = normalize_url_for_dedupe(next_url)
+                    if next_key not in queued and next_key not in visited:
+                        queued.add(next_key)
+                        pending.append((next_url, True, chain_key))
+                        channel_names[next_url] = channel_names.get(list_url, "")
+                        self.log(f"发现下一页: {next_url}")
             except Exception as e:
+                self.progress("error", source=name, kind="list")
                 self.log(f"列表页失败: {list_url} | {e}")
 
-        candidates = dedupe_links(candidates)
+        self.log(f"栏目遍历完成：发现 {discovered} 个子栏目，读取 {list_count} 个列表/分页页面")
+
+        candidates = list(candidate_by_url.values())
         records: list[dict] = []
         fetched = 0
 
         # 优先抓：已知日期在范围内且像详情页的链接。
         ranked = sorted(candidates, key=lambda x: (x.publish_date is None, x.date_text), reverse=False)
         for item in ranked:
-            if fetched >= self.max_detail_per_source:
+            if self.max_detail_per_source > 0 and fetched >= self.max_detail_per_source:
                 break
+            if normalize_url_for_dedupe(item.url) in navigation_keys:
+                continue
 
             if item.publish_date and not in_range(item.publish_date, start, end):
                 continue
@@ -114,6 +184,7 @@ class GovCrawler:
             try:
                 html, final_url = self.client.fetch_text(item.url)
                 fetched += 1
+                self.progress("page_processed", source=name, kind="detail")
                 article = extract_article(html, final_url, fallback_title=item.title, source_name=name)
                 pub_date = article.publish_date or item.publish_date
                 if not in_range(pub_date, start, end):
@@ -138,14 +209,18 @@ class GovCrawler:
 
                 record = self.article_to_record(source, article, pub_date, decision["cls"], llm_result=decision.get("llm_result"))
                 records.append(record)
+                self.progress("record_included", source=name)
                 self.log(f"命中: {fmt_date(pub_date)} | {record['category']} | {record['title']} | {record['url']} | 判定:{record.get('decision_source','')}")
             except Exception as e:
+                self.progress("error", source=name, kind="detail")
                 self.log(f"详情页失败: {item.url} | {e}")
 
         self.log(f"{name} 命中 {len(records)} 条，详情抓取 {fetched} 条")
         return records
 
     def should_fetch_candidate(self, item: LinkItem) -> bool:
+        if Path(urlparse(item.url).path).suffix.lower() in ATTACHMENT_EXTS:
+            return False
         title_context = f"{item.title} {item.context} {item.url}"
         strong_title_hit = contains_any(
             title_context,
@@ -189,6 +264,7 @@ class GovCrawler:
         for url in manual_urls:
             try:
                 html, final_url = self.client.fetch_text(url)
+                self.progress("page_processed", source="手工补充链接", kind="detail")
                 article = extract_article(html, final_url, fallback_title=None, source_name="")
                 if not in_range(article.publish_date, start, end):
                     continue
@@ -197,8 +273,11 @@ class GovCrawler:
                 if not decision["include"]:
                     continue
                 records.append(self.article_to_record(source, article, article.publish_date, decision["cls"], llm_result=decision.get("llm_result")))
+                self.progress("record_included", source="手工补充链接")
             except Exception as e:
+                self.progress("error", source="手工补充链接", kind="detail")
                 self.log(f"手工链接失败: {url} | {e}")
+        self.client.close_browser()
         return dedupe_records(records)
 
     def decide_with_optional_llm(self, source: dict, article: Article, pub_date, cls: dict) -> dict:

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import ast
+import json
 import re
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urljoin, urlparse, urldefrag
+from urllib.parse import urljoin, urlparse, urldefrag, urlencode
 
 from bs4 import BeautifulSoup
+from lxml import etree
 
 from .date_utils import parse_cn_date
 
@@ -39,6 +43,15 @@ CHANNEL_KEYWORDS = [
     "政府信息公开",
     "信息公开",
     "政策解读",
+    "公开",
+    "目录",
+    "规章",
+    "标准",
+    "规划",
+    "计划",
+    "权责",
+    "行政执法",
+    "意见征集",
 ]
 
 BAD_LINK_PREFIXES = ("javascript:", "mailto:", "tel:", "#")
@@ -114,6 +127,8 @@ def is_probably_article_url(url: str) -> bool:
     path = urlparse(url).path
     if not path or path == "/":
         return False
+    if re.search(r"/(?:index(?:_\d+)?|h5(?:_\d+)?|list(?:_\d+)?|default|public_[^/]*|zfxxgk|redirect_firstChannel)\.(?:s?html?|jsp)$", path, re.I):
+        return False
     if any(p.search(path) for p in ARTICLE_URL_PATTERNS):
         return True
     # 南通等站点的政务内容 URL 常带 uuid，但是不一定有日期。
@@ -124,12 +139,110 @@ def is_probably_article_url(url: str) -> bool:
     return False
 
 
-def extract_links(html: str, base_url: str, only_same_site: bool = True) -> list[LinkItem]:
+def script_written_html(script: str) -> str:
+    fragments = []
+    pattern = r"document\.write(?:ln)?\s*\(\s*('(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\")\s*\)"
+    for match in re.finditer(pattern, script, re.S):
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                value = ast.literal_eval(match.group(1).replace(r"\/", "/"))
+        except (SyntaxError, ValueError):
+            continue
+        if isinstance(value, str):
+            fragments.append(value)
+    return "\n".join(fragments)
+
+
+def navigation_soup(html: str) -> BeautifulSoup:
+    """Expose links stored in JCMS XML and literal document.write fragments."""
     soup = BeautifulSoup(html, "lxml")
+    fragments = []
+    xml_documents = []
+    if html.lstrip().startswith(("<datastore", "<?xml")):
+        xml_documents.append(html)
+    for script in soup.find_all("script"):
+        content = script.string or ""
+        if script.get("type", "").lower() == "text/xml" and "<datastore" in content:
+            xml_documents.append(content)
+        else:
+            fragments.append(script_written_html(content))
+    for content in xml_documents:
+        document = etree.fromstring(content.encode("utf-8"), etree.XMLParser(
+            resolve_entities=False, no_network=True, recover=True,
+        ))
+        if document is None:
+            continue
+        for record in document.iter("record"):
+            fragments.append("".join(record.itertext()))
+        for group in document.iter("nextgroup"):
+            fragment = BeautifulSoup("".join(group.itertext()), "lxml")
+            for anchor in fragment.find_all("a", href=True):
+                anchor["data-pagination"] = "next"
+                fragments.append(str(anchor))
+    for fragment in fragments:
+        if fragment:
+            container = soup.new_tag("div", attrs={"data-extracted-markup": "true"})
+            parsed = BeautifulSoup(fragment, "lxml")
+            for node in list((parsed.body or parsed).contents):
+                container.append(node.extract())
+            soup.append(container)
+    return soup
+
+
+def extract_static_script_urls(html: str, base_url: str) -> list[str]:
+    soup = BeautifulSoup(html, "lxml")
+    urls = []
+    for script in soup.find_all("script", src=True):
+        url = normalize_url(script["src"], base_url)
+        if url and same_site(url, base_url) and re.search(
+            r"/script/\d+/[^/]+\.js|/(?:header|head|nav|footer|top|bottom|menu)[^/]*\.js$|/cms_files/filemanager/(?:[^/]+/)?script/", urlparse(url).path, re.I,
+        ):
+            urls.append(url)
+    return list(dict.fromkeys(urls))
+
+
+def extract_redirect_url(html: str, base_url: str) -> str | None:
+    soup = BeautifulSoup(html, "lxml")
+    for meta in soup.find_all("meta"):
+        if meta.get("http-equiv", "").lower() == "refresh":
+            match = re.search(r"url\s*=\s*['\"]?([^'\"]+)", meta.get("content", ""), re.I)
+            if match:
+                target = normalize_url(match.group(1).strip(), base_url)
+                if target and same_site(target, base_url):
+                    return target
+    if soup.find("a", href=True):
+        return None
+    for script in soup.find_all("script"):
+        for match in re.finditer(r"(?:window\.)?location(?:\.href|\.replace\s*\()?\s*(?:=\s*)?['\"]([^'\"]+)['\"]", script.string or ""):
+            target = normalize_url(match.group(1), base_url)
+            if target and urlparse(target).hostname == urlparse(base_url).hostname and target != base_url:
+                return target
+    return None
+
+
+def extract_links(html: str, base_url: str, only_same_site: bool = True, *, _soup: BeautifulSoup | None = None) -> list[LinkItem]:
+    soup = _soup if _soup is not None else navigation_soup(html)
     results: list[LinkItem] = []
     seen: set[str] = set()
-    for a in soup.find_all("a"):
+    for a in soup.select("a, area[href], [onclick], select option[value]"):
         href = a.get("href")
+        if a.name == "option":
+            value = a.get("value", "")
+            if not value.startswith(("http://", "https://", "/", "./", "../")):
+                continue
+            href = value
+        if (not href or str(href).lower().startswith("javascript:")) and urlparse(base_url).hostname and urlparse(base_url).hostname.endswith("hlj.gov.cn"):
+            channel_id = a.get("data-channelid", "")
+            if re.fullmatch(r"[a-fA-F0-9]{32}", channel_id):
+                href = f"/common/search/{channel_id}?" + urlencode({
+                    "_isAgg": "true", "_isJson": "true", "_pageSize": 15,
+                    "_template": "index", "page": 1,
+                })
+        if not href or str(href).lower().startswith(("javascript:", "#")):
+            match = re.search(r"(?:window\.open\s*\(|(?:window\.)?location\.href\s*=\s*)['\"]([^'\"]+)['\"]", a.get("onclick", ""))
+            if match:
+                href = match.group(1)
         url = normalize_url(href, base_url)
         if not url:
             continue
@@ -145,6 +258,16 @@ def extract_links(html: str, base_url: str, only_same_site: bool = True) -> list
         date_text = date.strftime("%Y-%m-%d") if date else ""
         results.append(LinkItem(title=title, url=url, publish_date=date, date_text=date_text, context=parent_text[:300]))
         seen.add(url)
+        if a.get("data-channelid") and a.get("data-code") and a.parent and a.parent.select_one("i.plus, i.icon, ol"):
+            website = soup.find(id="websiteCode") or soup.find("meta", attrs={"name": "websiteCode"})
+            website_code = (website.get("content") or website.get_text(strip=True)) if website else ""
+            if website_code and urlparse(base_url).hostname and urlparse(base_url).hostname.endswith("hlj.gov.cn"):
+                tree_url = urljoin(base_url, "/common/getChannelList") + "?" + urlencode({
+                    "channelCode": a["data-code"], "websiteCodeName": website_code,
+                })
+                if tree_url not in seen:
+                    results.append(LinkItem(title=title + "子栏目", url=tree_url, context=parent_text[:300]))
+                    seen.add(tree_url)
     return results
 
 
@@ -152,7 +275,9 @@ def discover_channel_urls(html: str, base_url: str, max_channels: int = 12) -> l
     """从首页发现可能有用的栏目页。这里只发现栏目，详情页另行过滤。"""
     urls: list[str] = []
     for item in extract_links(html, base_url, only_same_site=True):
-        combined = f"{item.title} {item.url} {item.context}"
+        if is_probably_article_url(item.url) or Path(urlparse(item.url).path).suffix.lower() in ATTACHMENT_EXTS:
+            continue
+        combined = f"{item.title} {item.url}"
         if any(k in combined for k in CHANNEL_KEYWORDS):
             urls.append(item.url)
     deduped = []
@@ -161,9 +286,81 @@ def discover_channel_urls(html: str, base_url: str, max_channels: int = 12) -> l
         if url not in seen:
             deduped.append(url)
             seen.add(url)
-        if len(deduped) >= max_channels:
+        if max_channels > 0 and len(deduped) >= max_channels:
             break
     return deduped
+
+
+def extract_pagination_urls(html: str, base_url: str, *, _soup: BeautifulSoup | None = None) -> list[str]:
+    soup = _soup if _soup is not None else navigation_soup(html)
+    urls = []
+    for pager in soup.select(".pagination[uniturl][querydata][pageno][rows][count]"):
+        target = normalize_url(pager["uniturl"], base_url)
+        if not target or not same_site(target, base_url) or urlparse(target).path != "/api-gateway/jpaas-publish-server/front/page/build/unit":
+            continue
+        try:
+            params = ast.literal_eval(pager["querydata"])
+            current, size, total = int(pager["pageno"]), int(pager["rows"]), int(pager["count"])
+            if not isinstance(params, dict) or not all(isinstance(k, str) and isinstance(v, (str, int)) for k, v in params.items()):
+                continue
+        except (ValueError, SyntaxError, TypeError):
+            continue
+        if current >= 1 and size > 0 and current * size < total:
+            params["paramJson"] = json.dumps({"pageNo": current + 1, "pageSize": str(size)}, separators=(",", ":"))
+            urls.append(target + "?" + urlencode(params))
+    for anchor in soup.find_all("a", href=True):
+        label = clean_text(anchor.get_text(" ", strip=True))
+        next_page = anchor.get("data-pagination") == "next" or "next" in anchor.get("rel", [])
+        next_page = next_page or bool(re.fullmatch(r"下一页|下页|next|[>»]+", label, re.I))
+        if not next_page or anchor.get("aria-disabled") == "true":
+            continue
+        target = normalize_url(anchor["href"], base_url)
+        if target and same_site(target, base_url) and target != base_url:
+            urls.append(target)
+    # TRS emits only JavaScript pagination controls in its static list pages.
+    for match in re.finditer(r"createPageHTML\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*['\"]([^'\"]+)['\"]\s*,\s*['\"](s?html?|htm)['\"]", html, re.I):
+        total, current = int(match[1]), int(match[2])
+        if current + 1 < total:
+            target = normalize_url(f"{match[3]}_{current + 1}.{match[4]}", base_url)
+            if target and same_site(target, base_url):
+                urls.append(target)
+    for script in soup.find_all("script"):
+        code = script.string or ""
+        current = re.search(r"\bvar\s+currentPage\s*=\s*(\d+)", code)
+        total = re.search(r"\bvar\s+countPage\s*=\s*(\d+)", code)
+        extension = re.search(r"index\.(s?html?)\b", code, re.I)
+        if current and total and extension and "nextPage" in code and int(current[1]) + 1 < int(total[1]):
+            target = normalize_url(f"index_{int(current[1]) + 1}.{extension[1]}", base_url)
+            if target and same_site(target, base_url):
+                urls.append(target)
+    # TrueCMS already embeds the first group of records; request only the next group.
+    for match in re.finditer(r"\.jpage\s*\(\s*\{(.*?)\}\s*\)", html, re.S):
+        config = match[1]
+        proxy = re.search(r"proxyUrl\s*:\s*['\"]([^'\"]+)['\"]", config)
+        column = re.search(r"columnId\s*:\s*['\"]([a-fA-F0-9-]{36})['\"]", config)
+        total = re.search(r"totalRecord\s*:\s*(\d+)", config)
+        size = re.search(r"perPage\s*:\s*(\d+)", config)
+        if not all((proxy, column, total, size)):
+            continue
+        target = normalize_url(proxy[1], base_url)
+        if not target or not same_site(target, base_url) or urlparse(target).path != "/truecms/messageController/getMessage.do":
+            continue
+        page_size = max(1, int(size[1]))
+        loaded = len(soup.select("#initData > ul, #initData > li, #initData > tr")) or page_size
+        if loaded < int(total[1]):
+            params = {"columnId": column[1], "startrecord": loaded + 1,
+                      "endrecord": min(loaded + page_size, int(total[1])), "perpage": page_size,
+                      "contentTemplate": "", "callback": "govreport"}
+            urls.append(target + "?" + urlencode(params))
+    if urlparse(base_url).hostname and urlparse(base_url).hostname.endswith("hlj.gov.cn") and soup.find(id="page_div"):
+        channel = soup.find("meta", attrs={"name": "channelId"}) or soup.find("meta", id="channelId")
+        page_size = soup.find("input", id="pageSize")
+        channel_id = channel.get("content", "") if channel else ""
+        if re.fullmatch(r"[a-fA-F0-9]{32}", channel_id):
+            params = {"_isAgg": "true", "_isJson": "true", "_pageSize": int(page_size.get("value", 15)) if page_size else 15,
+                      "_template": "index", "page": 2}
+            urls.append(urljoin(base_url, f"/common/search/{channel_id}?{urlencode(params)}"))
+    return list(dict.fromkeys(urls))
 
 
 def extract_article(html: str, url: str, fallback_title: str | None = None, source_name: str | None = None) -> Article:
@@ -254,6 +451,13 @@ def is_valid_title(title: str, source_name: str | None = None) -> bool:
 
 
 def extract_publish_date(soup: BeautifulSoup, all_text: str, url: str):
+    date_names = {"pubdate", "publishdate", "articletime", "articlepubdate", "articlepublishtime",
+                  "article:published_time", "dcext.pubdate", "dcsext.pubdate", "dc.date", "pubtime", "datepublished"}
+    for meta in soup.find_all("meta"):
+        if (meta.get("name") or meta.get("property") or "").lower() in date_names:
+            published = parse_cn_date(meta.get("content", ""))
+            if published:
+                return published
     # 优先匹配“发布时间/发布日期/时间/日期”附近的日期。
     patterns = [
         r"(?:发布时间|发布日期|发文日期|成文日期|更新时间|时间|日期)[:：\s]*([20]\d{3}[-/.年]\d{1,2}[-/.月]\d{1,2}日?)",

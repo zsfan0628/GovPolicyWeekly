@@ -18,7 +18,7 @@ function Test-ResultFile($Path) {
 }
 
 Write-Host 'Checking report export and desktop UI before packaging'
-python qt_app.py --self-test release-check/source.json
+python desktop_app.py --self-test release-check/source.json
 if ($LASTEXITCODE -ne 0) {
     Test-ResultFile 'release-check/source.json'
     throw 'Source check failed'

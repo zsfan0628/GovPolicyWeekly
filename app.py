@@ -28,7 +28,7 @@ RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
 DEFAULT_OUTPUT_ROOT = APP_DIR / "output"
 SETTINGS_PATH = APP_DIR / "user_settings.json"
 RUNTIME_DIR = APP_DIR / ".app_runtime"
-NO_LIMIT_VALUE = "1000000"
+NO_LIMIT_VALUE = "0"
 
 
 class DatePicker(Toplevel):

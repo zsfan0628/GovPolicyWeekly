@@ -10,9 +10,10 @@ project_dir = Path.cwd()
 datas = [
     (str(project_dir / "config"), "config"),
     (str(project_dir / "input"), "input"),
+    (str(project_dir / "ui" / "preview"), "ui/preview"),
 ]
 
-hiddenimports = ["main"]
+hiddenimports = ["main", "qt_app", "ui_preview", "gov_report.desktop"]
 for package in [
     "bs4",
     "docx",
@@ -29,6 +30,10 @@ hiddenimports += [
     "PySide6.QtCore",
     "PySide6.QtGui",
     "PySide6.QtWidgets",
+    "PySide6.QtQml",
+    "PySide6.QtQuick",
+    "PySide6.QtQuickControls2",
+    "PySide6.QtSvg",
 ]
 
 datas += collect_data_files("playwright")
@@ -58,23 +63,17 @@ excludes = [
     "PySide6.QtHelp",
     "PySide6.QtMultimedia",
     "PySide6.QtMultimediaWidgets",
-    "PySide6.QtNetwork",
-    "PySide6.QtOpenGL",
     "PySide6.QtOpenGLWidgets",
     "PySide6.QtPdf",
     "PySide6.QtPdfWidgets",
     "PySide6.QtPositioning",
     "PySide6.QtPrintSupport",
-    "PySide6.QtQml",
-    "PySide6.QtQuick",
-    "PySide6.QtQuickControls2",
     "PySide6.QtQuickWidgets",
     "PySide6.QtRemoteObjects",
     "PySide6.QtScxml",
     "PySide6.QtSensors",
     "PySide6.QtSerialPort",
     "PySide6.QtSql",
-    "PySide6.QtSvg",
     "PySide6.QtSvgWidgets",
     "PySide6.QtTest",
     "PySide6.QtTextToSpeech",
@@ -89,7 +88,7 @@ excludes = [
 
 
 a = Analysis(
-    ["qt_app.py"],
+    ["desktop_app.py"],
     pathex=[str(project_dir)],
     binaries=[],
     datas=datas,

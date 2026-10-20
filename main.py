@@ -22,8 +22,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--keywords", type=str, default="config/keywords.yaml", help="关键词配置文件")
     p.add_argument("--manual-urls", type=str, default="input/manual_urls.txt", help="手工补充URL文件，一行一个")
     p.add_argument("--output-root", type=str, default="output", help="输出根目录")
-    p.add_argument("--max-channels-per-source", type=int, default=10, help="每个站点首页自动发现的栏目页数量上限")
-    p.add_argument("--max-detail-per-source", type=int, default=80, help="每个站点最多进入详情页数量，防止过慢")
+    p.add_argument("--max-channels-per-source", type=int, default=0, help="每个站点自动发现的栏目数量上限；0为不限")
+    p.add_argument("--max-detail-per-source", type=int, default=0, help="每个站点详情抓取数量上限；0为不限")
     p.add_argument("--no-download-attachments", action="store_true", help="只记录附件链接，不下载附件")
     p.add_argument("--sleep", type=float, default=0.5, help="每次请求之间的间隔秒数")
     p.add_argument("--no-verify-ssl", action="store_true", help="关闭SSL证书校验，少数旧政府网站证书异常时可用")
@@ -32,12 +32,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--browser-fallback", action="store_true", default=True, help="遇到403/412/重定向异常时，尝试用 Playwright 浏览器方式读取。v5.2默认启用。需另行安装 playwright。")
     p.add_argument("--no-browser-fallback", action="store_true", help="关闭 Playwright 浏览器兜底读取。")
     p.add_argument("--allow-rule-fallback", action="store_true", help="当GPT未启用时，允许模糊候选按规则兜底通过。默认关闭，避免半信半疑内容进入报告。")
+    p.add_argument("--progress-json", action="store_true", help="输出供桌面界面读取的结构化进度事件")
     return p.parse_args()
 
 
 def main() -> None:
     run_start_ts = time.perf_counter()
     args = parse_args()
+    def progress(payload):
+        if args.progress_json:
+            print("@@GOV_PROGRESS " + json.dumps(payload, ensure_ascii=False), flush=True)
     start, end = resolve_date_range(
         days=args.days,
         start_date=args.start_date,
@@ -66,11 +70,13 @@ def main() -> None:
         use_llm=not args.no_llm,
         browser_fallback=(args.browser_fallback and not args.no_browser_fallback),
         allow_rule_fallback=args.allow_rule_fallback,
+        progress_callback=progress if args.progress_json else None,
     )
 
     records = crawler.crawl(start, end, source_name=args.source)
     manual_urls = read_manual_urls(args.manual_urls)
     if manual_urls:
+        progress({"event": "manual_started"})
         print(f"读取手工补充链接 {len(manual_urls)} 条")
         records.extend(crawler.crawl_manual_urls(manual_urls, start, end))
 
@@ -78,6 +84,7 @@ def main() -> None:
     records = dedupe_records(records)
     records = sorted(records, key=lambda x: (x.get("publish_date", ""), x.get("source_name", "")), reverse=True)
 
+    progress({"event": "export_started", "record_count": len(records)})
     paths = export_all(records, out_dir, start, end, keywords)
 
     elapsed = time.perf_counter() - run_start_ts
@@ -103,8 +110,9 @@ def main() -> None:
     print(f"- runtime: {out_dir / 'runtime_summary.json'}")
     print(f"共命中 {len(records)} 条。")
     print(f"程序运行总时长：{elapsed_text}")
-    print("GPT复判配置在 gov_report/llm_config.py 中修改；如需关闭，用 --no-llm。")
-    print("v5.2 默认启用浏览器兜底；若提示未安装 Playwright，请执行：pip install playwright && python -m playwright install chromium")
+    print("大模型参数可在桌面界面中配置；命令行关闭复判可使用 --no-llm。")
+    progress({"event": "completed", "record_count": len(records), "paths": paths,
+              "elapsed_seconds": elapsed})
 
 
 def format_duration(seconds: float) -> str:

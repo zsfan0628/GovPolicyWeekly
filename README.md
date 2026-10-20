@@ -1,96 +1,103 @@
-# GovPolicyWeekly 政府政策周报生成工具
+# GovPolicyWeekly
 
-采集政府网站政策与人事任免信息，按日期、关键词和大模型复判筛选，生成带原文标题链接的 PDF 周报。
+**English** | [简体中文](README.zh-CN.md)
 
-## Windows 下载
+A desktop tool for collecting Chinese government policy and personnel announcements and producing weekly PDF reports with clickable source titles.
 
-前往 [Releases 下载页](https://github.com/zsfan0628/GovPolicyWeekly/releases/latest)。
+## Desktop Workspace
 
-- 安装版：下载 `GovPolicyWeekly_Setup_*.exe`，双击安装。
-- 便携版：下载 `GovPolicyWeekly_windows_portable.zip`，完整解压后打开文件夹里的 `GovPolicyWeekly.exe`。
+- Glass-style navigation, a bundled glacier background and an optional startup animation.
+- Calendar date selection, highlighted 7-day / 30-day presets, and searchable selection across 30 configured sites.
+- Real collection progress, filterable logs, stop controls and report history.
+- OpenAI-compatible model discovery and selection, with an optional rule-based fallback.
+- Attachment downloads and PDF export without a mandatory LibreOffice installation. Word, Excel and JSON exports are also retained.
+- Locally saved preferences, masked API key input, reduced motion and reduced transparency.
 
-支持 Windows 10/11 64 位，无需安装 Python 或 LibreOffice。
-当前 GitHub 构建版使用电脑已安装的 Edge/Chrome 进行浏览器兜底。
+The main workspace runs the real collection engine. `ui_preview.py` remains a separate, explicitly offline design demo.
 
-启用大模型复判时，在界面填写自己的 API URL 和 API Key，点击“获取模型”后选择模型。
-API Key 保存在自己电脑的 `user_settings.json`，不会随发布包分发；模型调用按服务商规则计费。
+## Windows Downloads
 
-## 自动构建
+Download from [GitHub Releases](https://github.com/zsfan0628/GovPolicyWeekly/releases/latest):
 
-GitHub Actions 使用标准 Windows 构建机器生成安装版和便携版。
-维护者可以在 Actions 中手动运行 `Windows Build and Release` 获取测试包。
-推送 `v1.0.0` 这样的版本标签时，会在检查通过后自动发布到 Releases。
-构建包含软件启动、站点勾选、时区、Excel、Word 和 PDF 导出检查。
+- **Installer:** run `GovPolicyWeekly_Setup_*.exe`.
+- **Portable:** fully extract `GovPolicyWeekly_windows_portable.zip`, then open `GovPolicyWeekly.exe`. Keep its supporting folders alongside it.
 
-使用公开仓库和标准 GitHub 托管构建机器，可免费执行自动构建。
-详细的本地打包与发布流程见 [WINDOWS_BUILD.md](WINDOWS_BUILD.md)。
+Windows 10/11, 64-bit. Packaged downloads do not require a separate Python or LibreOffice installation. The lean GitHub build uses an installed Microsoft Edge or Google Chrome for browser fallback.
 
-## 核心逻辑
+**Source updates are not automatic application updates.** An existing release may contain an older interface. Check its release notes; the new workspace must pass a new Windows build before it is available as a downloadable executable.
 
-1. 脚本先粗筛候选网页。
-2. 能确定的内容由规则硬通过：
-   - 正式人事任免、任前公示、人选公示；
-   - 政策栏目中的正式文种，例如通知、函、决定、公告、公示、通报、批复、意见、方案、办法、规定、解读等；
-   - 农药经营许可、农药登记、行政许可、排污许可证等硬白名单事项。
-3. 明显不是目标的内容直接排除：栏目页、首页、跳转页、普通会议新闻、视频、活动报道、单个项目环评受理/拟审查/审批公告等。
-4. 剩下不好判断的候选才调用 GPT-5.5 复判。
-5. GPT 未启用时，模糊候选默认不再兜底通过，避免“半信半疑”的内容进入报告。
+## Run From Source
 
-## API 配置
-
-桌面版直接在界面填写配置。命令行可以读取本地桌面配置，也支持环境变量：
+Use Python 3.10 or newer. The desktop UI requires PySide6 6.10 or newer within the 6.x series.
 
 ```bash
-export GOV_REPORT_OPENAI_API_KEY="你的API_KEY"
-export GOV_REPORT_OPENAI_BASE_URL="https://你的服务地址/v1"
-export GOV_REPORT_OPENAI_MODEL="你的模型名称"
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# macOS / Linux:
+source .venv/bin/activate
+python -m pip install -r requirements-windows-build.txt
+python desktop_app.py
 ```
 
-源码不包含共享 API Key。`user_settings.json`、输出报告和构建缓存不应提交到 GitHub。
-
-## 运行
+On macOS, create a local double-clickable desktop launcher:
 
 ```bash
-python main.py --start-date 2026-05-23 --end-date 2026-05-29
+python scripts/create_mac_preview_app.py --production
 ```
 
-## 图形界面测试版
+This launcher references the current project and Python environment; it is not a standalone macOS distribution. Keep both in place.
 
-本项目已提供一个轻量桌面界面，使用 Python 自带的 Tkinter，不需要额外安装 GUI 框架：
+Legacy interfaces remain available as `qt_app.py` and `app.py` (the latter requires Tkinter). Launch the offline design demo with `python ui_preview.py`.
+
+## Generate a Report
+
+1. Choose a date range and one or more sites. Recent-date presets end yesterday.
+2. Enter your model service's API base URL and API key, click the model-discovery button, and select a model. Or disable model classification to use the configured rules only.
+3. Choose an output folder and collection options, then start generation.
+4. Open the resulting PDF from the workspace or report history. Review warnings and source links before relying on a report.
+
+Collection does not impose channel or detail-count limits. Large selections can take time. It follows discovered public navigation and pagination; this does not guarantee every page on a site is discoverable. Browser fallback helps with JavaScript pages and some access restrictions, but cannot guarantee access to every site.
+
+Rules retain clear matches and reject clear non-target content. Ambiguous candidates are passed to the selected model. Without a model, ambiguous candidates are excluded unless rule fallback is explicitly enabled.
+
+## Privacy and Local Settings
+
+Bring your own model API credentials. Model requests are sent to the service you configure and may incur charges from that provider.
+
+- API keys are masked in the UI and redacted from the new workspace's logs. Local settings are **not encrypted**.
+- Settings use the user's application data directory: `~/Library/Application Support/GovPolicyWeekly/` on macOS, `%APPDATA%\GovPolicyWeekly\` on Windows, and the XDG configuration directory on Linux.
+- On first use, the workspace can import a legacy `user_settings.json` from the application folder without modifying that file.
+- Personal settings, environment files, reports, logs, caches, virtual environments and old development Git history are not part of the allowlisted source package.
+- Do not upload local settings, credentials, personal paths or generated reports to a public issue or repository. Redact diagnostics before sharing them.
+
+Maintainers should run `python scripts/prepare_github_source.py` before distributing source. Use `--upload-dir` with a **new destination path that does not already exist** to produce a checked browser-upload snapshot. The script checks known local credentials, common token formats and personal home paths, and stops on a match. These checks reduce risk; they cannot recognize every kind of private data.
+
+## Command Line
 
 ```bash
-python app.py
+python main.py --start-date 2026-10-01 --end-date 2026-10-07
 ```
 
-界面支持通过紧凑下拉日历选择日期范围、勾选多个站点、选择输出目录，并可开关 GPT 复判、附件下载、浏览器兜底、严格模式等选项。点击“开始生成”后，会在窗口中实时显示 `main.py` 的运行日志。
+For model configuration, set `GOV_REPORT_OPENAI_BASE_URL`, `GOV_REPORT_OPENAI_API_KEY` and `GOV_REPORT_OPENAI_MODEL` in your own environment. Never commit their real values. The command line also supports the legacy application-folder settings file; the new workspace passes its saved configuration directly to its worker.
 
-图形界面会把 API URL、API Key、模型名等配置保存到本地 `user_settings.json`，下次打开无需重复输入。API Key 在界面中会用密码框形式隐藏显示。填写 API URL 和 API Key 后，可以点击“获取模型”读取模型列表，并从下拉框选择模型；如果服务商不开放模型列表接口，日志会显示具体请求地址和错误状态。
+Useful options include `--no-llm`, `--no-browser-fallback`, `--no-download-attachments` and `--allow-rule-fallback`. Run `python main.py --help` for the full list.
 
-界面版默认按“无栏目/详情上限”运行，会尽量搜索所选站点发现到的全部栏目和详情页；因此选择全部站点时耗时可能明显增加。
-
-### Windows 运行提示
-
-PDF 可通过内置 reportlab 引擎直接生成，不再强制依赖 LibreOffice。若电脑上安装了 LibreOffice，程序会优先尝试把 DOCX 转成 PDF；没有 LibreOffice 时，会自动改用内置 PDF 引擎。
-
-浏览器兜底依赖 Playwright。未安装 Playwright 时，普通网页采集仍可运行，但遇到需要浏览器访问的网站时兜底能力不可用。安装方式：
+## Tests and Builds
 
 ```bash
-pip install playwright
-python -m playwright install chromium
+python -m unittest discover -s tests -v
+python desktop_app.py --self-test release-check/desktop-self-test.json
+python desktop_app.py --smoke-test --artifacts release-check/desktop-integration
+python ui_preview.py --smoke-test
 ```
 
-湖北部分政府站点可能对普通 requests 返回 412。v5.2 默认启用 Playwright 浏览器兜底；如果不想用浏览器兜底，可以关闭界面里的“浏览器兜底”，或在命令行使用 `--no-browser-fallback`。
+The desktop integration test uses a local HTTP site and a local model-service fixture. It exercises the real worker, classification, attachment downloads, linked PDF export, persistence and stop controls without calling paid APIs or live government sites.
 
-如果不想用浏览器兜底：
+GitHub Actions can build and check the Windows executable, installer and portable archive. A version tag triggers release publication after checks pass; a manual workflow run produces test artifacts. See [Windows build instructions](WINDOWS_BUILD.md).
 
-```bash
-python main.py --no-browser-fallback --start-date 2026-05-23 --end-date 2026-05-29
-```
+## Website Coverage and Credits
 
-如果 GPT 没启用，但你仍想让模糊候选按规则兜底通过：
+The latest documented site-navigation review covers 30 sites on **2026-10-18**, including public columns, pagination, buttons, dropdowns and search entry points. It does not certify all historical pages, authenticated services or form submissions. See the [site audit](docs/site-audit-2026-10-18.md) and [changelog](CHANGELOG.md). Sites may change after any test.
 
-```bash
-python main.py --allow-rule-fallback --no-llm --start-date 2026-05-23 --end-date 2026-05-29
-```
-
-不建议日常使用 `--allow-rule-fallback`，因为它可能把不确定内容收进报告。
+Icons: Lucide, ISC license. Wallpaper attribution and the Unsplash license are documented in [asset credits](ui/preview/assets/ATTRIBUTION.md). The glass effect is a custom cross-platform Qt implementation, not Apple's native Liquid Glass API; motion references are documented in [UI notes](ui/preview/README.md).

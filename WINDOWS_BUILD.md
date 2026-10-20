@@ -41,7 +41,7 @@ build_windows.bat
 6. 生成可执行文件目录。
 7. 自动压缩出 `GovPolicyWeekly_windows_portable.zip`，这个 zip 可以传到其他 Windows 电脑解压运行。
 
-注意：旧版 Tkinter UI 仍保留在 `app.py` 供本地开发使用；Windows 打包入口是 `qt_app.py`。
+注意：旧版 Tkinter UI 保留在 `app.py`，旧版 Qt Widgets UI 保留在 `qt_app.py`。当前 Windows 打包入口是 `desktop_app.py`，使用带真实采集功能的 Qt Quick 玻璃界面，需要 PySide6 6.10 或更新的 6.x 版本。新入口及 QML、壁纸、图标和着色器已加入打包配置，但本次 macOS 本地检查不等于 Windows 实机验收，发布前必须在 Windows 构建并执行 exe 自检。
 
 生成后运行：
 
@@ -125,4 +125,4 @@ GovPolicyWeekly_Setup_1.0.0.exe
 
 Windows 便携包的主要体积来自 PySide6 桌面界面、Playwright 浏览器驱动、python-docx、openpyxl、reportlab 等运行库。
 
-当前打包配置已经做了基础瘦身：不再打入 pandas/numpy/tqdm，也不再收集完整 PySide6，只保留 QtCore、QtGui、QtWidgets 相关内容。构建结束时脚本会输出 size report，方便查看最大文件来源。
+当前打包配置已经做了基础瘦身：不再打入 pandas/numpy/tqdm，也不再收集完整 PySide6。新界面需要 QtCore、QtGui、QtWidgets、QtQml、QtQuick、QtQuickControls2 和 QtSvg 及其依赖，不应为了减小体积再排除这些运行库。构建结束时脚本会输出 size report，方便查看最大文件来源。

@@ -43,7 +43,7 @@ APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False)
 RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
 SETTINGS_PATH = APP_DIR / "user_settings.json"
 RUNTIME_DIR = APP_DIR / ".app_runtime"
-NO_LIMIT_VALUE = "1000000"
+NO_LIMIT_VALUE = "0"
 
 
 class GovPolicyQtApp(QWidget):

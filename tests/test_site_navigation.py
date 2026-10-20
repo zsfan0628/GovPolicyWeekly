@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
+from bs4 import BeautifulSoup
+
 from gov_report.crawler import GovCrawler
 from gov_report.date_utils import resolve_date_range
 from gov_report.http import HttpClient
@@ -16,6 +18,7 @@ from gov_report.parser import (
     extract_redirect_url,
     extract_static_script_urls,
     extract_article,
+    navigation_soup,
     script_written_html,
 )
 
@@ -54,6 +57,20 @@ class NavigationTests(unittest.TestCase):
         html = '<select><option value="">请选择</option><option value="/policies/">政策文件</option><option value="2026">2026年</option></select>'
         self.assertEqual([x.url for x in extract_links(html, "https://example.gov.cn/")],
                          ["https://example.gov.cn/policies/"])
+
+    def test_extracted_navigation_stays_inside_the_html_document(self):
+        html = '<html><body><script>document.write(\'<a href="/policies/">政策文件</a>\')</script></body></html>'
+        soup = navigation_soup(html)
+        self.assertIsNotNone(soup.select_one('[data-extracted-markup]').find_parent('body'))
+        client = HttpClient(sleep=0)
+        url = 'https://example.gov.cn/header.js'
+        client._navigation_cache[url] = '<a href="/policies/">政策文件</a>'
+        html = '<html><body><script src="/header.js"></script></body></html>'
+        rendered = client.expand_navigation(html, 'https://example.gov.cn/')
+        soup = BeautifulSoup(rendered, 'lxml')
+        self.assertEqual(len(soup.find_all('html')), 1)
+        self.assertIsNotNone(soup.select_one('[data-extracted-navigation]').find_parent('body'))
+        self.assertTrue(rendered.endswith('</html>'))
 
     def test_redirect_selects_same_host_desktop_target(self):
         html = '<script>if(mobile){window.location.href="https://m.example.gov.cn/index.htm";}else{window.location.href="/index.htm";}</script>'
@@ -105,6 +122,8 @@ class NavigationTests(unittest.TestCase):
         xml = '<datastore><totalrecord>24</totalrecord><recordset><record><![CDATA[<li><a href="/ntaj/zcwj/content/abc.html">政策文件通知</a><span>2026-10-16</span></li>]]></record></recordset></datastore>'
         response.text = ";govreport(" + json.dumps({"result": xml}) + ")"
         html = HttpClient.render_truecms_response(response)
+        self.assertTrue(html.endswith('</html>'))
+        self.assertIsNotNone(BeautifulSoup(html, 'lxml').find('a', rel='next').find_parent('body'))
         links = extract_links(html, response.url)
         self.assertEqual(links[0].date_text, "2026-10-16")
         self.assertEqual(links[0].title, "政策文件通知")

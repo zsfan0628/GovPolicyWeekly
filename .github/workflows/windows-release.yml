@@ -7,6 +7,15 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (without the v prefix)
+        required: true
+        default: '1.1.0'
+      publish:
+        description: Publish checked installer and portable downloads
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -19,6 +28,8 @@ jobs:
   build:
     runs-on: windows-2022
     timeout-minutes: 40
+    outputs:
+      release_tag: ${{ steps.package.outputs.release_tag }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -33,15 +44,21 @@ jobs:
           python -m pip install -r requirements-windows-build.txt
           if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
       - name: Build and check Windows software
+        id: package
         shell: pwsh
         env:
           RELEASE_TAG: ${{ github.ref_name }}
+          REQUESTED_VERSION: ${{ inputs.version || '1.1.0' }}
           PYTHONUTF8: '1'
         run: |
-          python -m unittest discover -s tests -v
-          if ($LASTEXITCODE -ne 0) { throw 'Website navigation regression tests failed' }
-          $version = '1.0.0'
+          $version = $env:REQUESTED_VERSION
           if ($env:GITHUB_REF_TYPE -eq 'tag') { $version = $env:RELEASE_TAG.TrimStart('v') }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid release version' }
+          "release_tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          python -m unittest discover -s tests -v
+          if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed' }
+          python desktop_app.py --smoke-test --artifacts release-check/desktop-integration
+          if ($LASTEXITCODE -ne 0) { throw 'Real desktop integration checks failed' }
           ./scripts/build_release.ps1 -Version $version
       - name: Save download files
         uses: actions/upload-artifact@v4
@@ -64,7 +81,7 @@ jobs:
           if-no-files-found: ignore
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -80,12 +97,12 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
         run: |
           set -euo pipefail
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --draft --verify-tag \
+            gh release create "$RELEASE_TAG" --draft --target "$GITHUB_SHA" \
               --title "GovPolicyWeekly $RELEASE_TAG" --notes-file RELEASE_NOTES.md
           fi
           gh release upload "$RELEASE_TAG" release/* --clobber
-          gh release edit "$RELEASE_TAG" --draft=false
+          gh release edit "$RELEASE_TAG" --draft=false --latest

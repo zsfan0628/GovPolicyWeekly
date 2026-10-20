@@ -169,7 +169,7 @@ class HttpClient:
             next_url = urlunparse(urlparse(response.url)._replace(query=urlencode(params)))
             anchor = soup.new_tag("a", href=next_url, rel="next")
             anchor.string = "下一页"
-            soup.append(anchor)
+            (soup.body or soup).append(anchor)
         return str(soup)
 
     @staticmethod
@@ -235,7 +235,14 @@ class HttpClient:
             if self._navigation_cache[url]:
                 fragments.append(self._navigation_cache[url])
         if fragments:
-            html += '\n<div data-extracted-navigation="true">' + "\n".join(fragments) + "</div>"
+            soup = BeautifulSoup(html, "lxml")
+            container = soup.new_tag("div", attrs={"data-extracted-navigation": "true"})
+            for fragment in fragments:
+                parsed = BeautifulSoup(fragment, "lxml")
+                for node in list((parsed.body or parsed).contents):
+                    container.append(node.extract())
+            (soup.body or soup).append(container)
+            html = str(soup)
         return html
 
     @staticmethod

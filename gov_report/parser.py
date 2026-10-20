@@ -186,7 +186,7 @@ def navigation_soup(html: str) -> BeautifulSoup:
             parsed = BeautifulSoup(fragment, "lxml")
             for node in list((parsed.body or parsed).contents):
                 container.append(node.extract())
-            soup.append(container)
+            (soup.body or soup).append(container)
     return soup
 
 

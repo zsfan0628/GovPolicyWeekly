@@ -1,10 +1,16 @@
-# GovPolicyWeekly v1.1.0
+# GovPolicyWeekly v1.2.0
 
 ## English
 
-New glass-style desktop workspace with real collection, model discovery, live progress, stop controls and report history. Includes highlighted 7-day / 30-day date presets and refreshed navigation for 30 configured government sites.
+Model API compatibility fixes and focused policy/personnel collection in the glass-style desktop workspace.
 
-- **Installer:** `GovPolicyWeekly_Setup_1.1.0.exe`.
+- Automatically negotiate Chat Completions / Responses and JSON output modes. Detect HTML returned by a website root, and try the same service's `/v1` path when appropriate.
+- Separate unsuccessful model calls from valid decisions to exclude an article. Show successful and failed reviews in progress and saved run statistics.
+- Use 410 core entries from the 703-entry, 30-site audit inventory; process each page immediately, with conservative date-window pagination and up to three sites in parallel.
+- Reuse article/model caches across date ranges. Recent articles are re-fetched; older snapshots can be reused for up to seven days. Full-scan and no-cache controls remain available.
+- Attachment downloads start off on every launch. When enabled, PDF export finishes before attachment downloads.
+
+- **Installer:** `GovPolicyWeekly_Setup_1.2.0.exe`.
 - **Portable:** fully extract `GovPolicyWeekly_windows_portable.zip`, then run `GovPolicyWeekly/GovPolicyWeekly.exe`. Keep all supporting folders.
 - **Checksums:** `SHA256SUMS.txt`.
 
@@ -16,11 +22,17 @@ Publication is gated on regression tests, local-fixture desktop integration, sou
 
 ## 简体中文
 
-新增玻璃风格桌面工作台，已连接真实采集、模型获取、实时进度、停止任务与历史报告。包含带选中高亮的“近 7 天 / 近 30 天”，以及 30 个政府站点的最新栏目导航适配。
+本版主要修复大模型接口调用，并包含政策、人事核心栏目采集优化。
+
+- 自动协商 Chat Completions / Responses 和 JSON 输出模式；识别错误返回的网站 HTML，必要时尝试同服务的 `/v1` 路径。
+- 调用失败明确标为“未完成复判”，不再误写为“模型判断排除”；界面、日志和运行摘要分别统计成功与失败。
+- 从 30 个网站的 703 个预设入口中使用 410 个核心入口；逐页处理，保守按日期停止历史翻页，最多三个站点并行。
+- 正文和模型缓存跨日期范围复用；近期文章重新读取，较旧快照最多复用七天，保留完整遍历与禁用缓存的核对参数。
+- 每次启动默认关闭附件下载；手动启用时先生成可打开的 PDF，再下载附件。
 
 下载方式：
 
-- `GovPolicyWeekly_Setup_1.1.0.exe`：安装版，双击安装后从开始菜单或桌面快捷方式打开。
+- `GovPolicyWeekly_Setup_1.2.0.exe`：安装版，双击安装后从开始菜单或桌面快捷方式打开。
 - `GovPolicyWeekly_windows_portable.zip`：便携版，完整解压后打开 `GovPolicyWeekly/GovPolicyWeekly.exe`。
 - `SHA256SUMS.txt`：下载文件的 SHA-256 校验值。
 
@@ -31,6 +43,8 @@ Publication is gated on regression tests, local-fixture desktop integration, sou
 
 启用大模型复判时，请在软件界面填写自己的 API URL、API Key 并获取模型。
 软件不附带共享 API Key，模型调用费用由各自的 API 服务商收取。
+
+旧报告不会自动补做模型复判；需要重新运行才能让之前调用失败的候选进入新版判断流程。
 
 发布前执行回归测试、本地测试站点的桌面集成检查、源码与打包后 exe 自检、安装包静默安装及安装后程序自检，并检查便携 ZIP 完整性；自检涉及界面、时区、Excel、Word 和 PDF 导出。各政府网站的实际访问情况仍受网站状态和当前网络影响。
 

@@ -11,7 +11,7 @@ on:
       version:
         description: Release version (without the v prefix)
         required: true
-        default: '1.1.0'
+        default: '1.2.0'
       publish:
         description: Publish checked installer and portable downloads
         type: boolean
@@ -48,7 +48,7 @@ jobs:
         shell: pwsh
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-          REQUESTED_VERSION: ${{ inputs.version || '1.1.0' }}
+          REQUESTED_VERSION: ${{ inputs.version || '1.2.0' }}
           PYTHONUTF8: '1'
         run: |
           $version = $env:REQUESTED_VERSION

@@ -79,7 +79,7 @@ ApplicationWindow {
         apiKey.text = s.openai_api_key || ""
         root.desiredModel = s.openai_model || ""
         llmEnabled.checked = s.use_llm === undefined ? true : s.use_llm
-        attachments.checked = s.download_attachments === undefined ? true : s.download_attachments
+        attachments.checked = s.download_attachments === undefined ? false : s.download_attachments
         browserFallback.checked = s.browser_fallback === undefined ? true : s.browser_fallback
         strictMode.checked = s.strict_mode === undefined ? true : s.strict_mode
         verifySsl.checked = s.verify_ssl === undefined ? true : s.verify_ssl
@@ -395,7 +395,7 @@ ApplicationWindow {
                                 }
                                 GridLayout {
                                     Layout.fillWidth: true; columns: 2; columnSpacing: 28; rowSpacing: 4
-                                    SettingPair { id: attachments; objectName: "attachments"; label: "下载附件"; checked: true; onCheckedChanged: root.queueSave() }
+                                    SettingPair { id: attachments; objectName: "attachments"; label: "下载附件"; checked: false; onCheckedChanged: root.queueSave() }
                                     SettingPair { id: verifySsl; objectName: "verifySsl"; label: "校验 SSL"; checked: true; onCheckedChanged: root.queueSave() }
                                     SettingPair { id: browserFallback; objectName: "browserFallback"; label: "浏览器兜底"; checked: true; onCheckedChanged: root.queueSave() }
                                     SettingPair { id: strictMode; objectName: "strictMode"; label: "严格筛选"; checked: true; onCheckedChanged: root.queueSave() }
@@ -467,10 +467,16 @@ ApplicationWindow {
                                             Behavior on width { NumberAnimation { duration: root.reducedMotion ? 0 : 250 } }
                                         }
                                     }
+                                    Text {
+                                        text: preview.stageSummary; color: "#646764"; font.pixelSize: 11
+                                        Layout.fillWidth: true; wrapMode: Text.Wrap
+                                    }
                                     ColumnLayout {
                                         spacing: 9; Layout.fillWidth: true
                                         SmallLabel { text: preview.running ? "正在处理" : preview.done > 0 ? "最近任务" : "当前站点"; font.pixelSize: 11 }
                                         Text { text: preview.currentSite; color: "#3d3f3d"; font.pixelSize: 13; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                        Text { text: preview.activeSources; visible: text.length > 0; color: "#646764"; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                        Text { text: preview.currentColumn; visible: text.length > 0; color: "#646764"; font.pixelSize: 11; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true; maximumLineCount: 2; elide: Text.ElideRight }
                                         RowLayout {
                                             spacing: 6
                                             Icon { name: preview.running ? "refresh-cw" : "circle-check"; width: 13; height: 13; tint: "#6c706c" }
@@ -481,7 +487,7 @@ ApplicationWindow {
                                     ColumnLayout {
                                         Layout.fillWidth: true; spacing: 14
                                         Repeater {
-                                            model: ["栏目与列表", "详情与附件", "分类与汇总", "PDF 报告"]
+                                            model: ["栏目与列表", "详情提取", "分类与汇总", "PDF 报告"]
                                             RowLayout {
                                                 required property string modelData; required property int index
                                                 Layout.fillWidth: true; spacing: 11

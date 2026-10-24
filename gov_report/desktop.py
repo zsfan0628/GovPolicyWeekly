@@ -28,7 +28,7 @@ from ui_preview import APP_DIR, ROOT, Workspace
 PROGRESS_PREFIX = "@@GOV_PROGRESS "
 DEFAULTS = {
     "openai_base_url": "", "openai_api_key": "", "openai_model": "",
-    "use_llm": True, "download_attachments": True, "browser_fallback": True,
+    "use_llm": True, "download_attachments": False, "browser_fallback": True,
     "strict_mode": True, "verify_ssl": True, "allow_rule_fallback": False,
     "sleep_seconds": 0.5, "reduced_motion": False, "reduced_transparency": False,
 }
@@ -124,6 +124,7 @@ class DesktopController(Workspace):
         self.store = store or SettingsStore()
         self.resource_dir = resource_dir
         self.config = {**DEFAULTS, **self.store.load()}
+        self.config["download_attachments"] = False
         default_output = Path.home() / "Documents" / "GovPolicyWeekly" / "output" if getattr(sys, "frozen", False) else APP_DIR / "output"
         self.config.setdefault("output_root", str(default_output))
         self._output = str(Path(self.config["output_root"]).expanduser().absolute())
@@ -158,7 +159,7 @@ class DesktopController(Workspace):
         self.timer.timeout.connect(self._drain)
         self.timer.start()
         self.add_log("READY", "采集工作台已就绪")
-        self.add_log("INFO", f"已载入 {sources.total} 个站点配置；栏目与详情均不限数量")
+        self.add_log("INFO", f"已载入 {sources.total} 个站点；政策与人事核心栏目，最多三站并行")
         self.add_log("INFO", "PDF 可由内置引擎生成，不依赖 LibreOffice")
         self.refreshReports()
 
@@ -298,6 +299,8 @@ class DesktopController(Workspace):
                         "--manual-urls", str(self.resource_dir / "input" / "manual_urls.txt"),
                         "--max-channels-per-source", "0", "--max-detail-per-source", "0",
                         "--sleep", str(config["sleep_seconds"]), "--progress-json"]
+            if config["download_attachments"]:
+                command.append("--download-attachments")
             for key, flag in (("use_llm", "--no-llm"), ("download_attachments", "--no-download-attachments"),
                               ("browser_fallback", "--no-browser-fallback"), ("strict_mode", "--loose"),
                               ("verify_ssl", "--no-verify-ssl")):
@@ -334,6 +337,9 @@ class DesktopController(Workspace):
         self._current = selected[0]["siteName"]
         self._phase = "准备采集"
         self._done = self._pages = self._hits = self._errors = 0
+        self._stage_stats = {}
+        self._active_sources = {}
+        self._current_column = ""
         self._completed_payload = None
         self._last_pdf = ""
         self._started_at = time.monotonic()
@@ -372,14 +378,29 @@ class DesktopController(Workspace):
         if kind == "source_started":
             self._current = str(event.get("source", ""))
             self._phase = "栏目与列表"
+            self._active_sources[self._current] = self._phase
         elif kind == "page_processed":
             self._pages += 1
-            self._phase = "详情与附件" if event.get("kind") == "detail" else "栏目与列表"
+            self._phase = "详情提取" if event.get("kind") == "detail" else "栏目与列表"
+        elif kind == "stage_started":
+            labels = {"list": "栏目与列表", "detail": "详情提取", "llm": "模型判断", "attachment": "附件下载"}
+            self._phase = labels.get(event.get("kind"), "采集中")
+            self._current = str(event.get("source", self._current))
+            self._current_column = str(event.get("column") or event.get("url") or "")
+            if self._current:
+                self._active_sources[self._current] = self._phase
+        elif kind == "stage_finished":
+            stage = self._stage_stats.setdefault(event.get("kind"), {"count": 0, "seconds": 0, "cache_hits": 0, "errors": 0})
+            stage["count"] += 1
+            stage["seconds"] += max(0, float(event.get("seconds", 0)))
+            stage["cache_hits"] += int(bool(event.get("cache_hit")))
+            stage["errors"] += int(bool(event.get("error")))
         elif kind == "record_included":
             self._hits += 1
             self._phase = "分类与汇总"
         elif kind == "source_finished":
             self._done += 1
+            self._active_sources.pop(str(event.get("source", "")), None)
         elif kind == "error":
             self._errors += 1
         elif kind == "export_started":
@@ -388,7 +409,16 @@ class DesktopController(Workspace):
             self._hits = int(event.get("record_count", self._hits))
         elif kind == "manual_started":
             self._current = "手工补充链接"
-            self._phase = "详情与附件"
+            self._phase = "详情提取"
+        elif kind == "report_ready":
+            pdf = Path(event.get("paths", {}).get("pdf", ""))
+            if pdf.is_file() and pdf.suffix.lower() == ".pdf":
+                self._last_pdf = str(pdf.absolute())
+                self.add_log("DONE", "PDF 已生成，可立即打开")
+                self.refreshReports()
+        elif kind == "attachments_started":
+            self._state = "PDF 已生成，下载附件中"
+            self._phase = "附件下载"
         elif kind == "completed":
             self._completed_payload = event
             self._hits = int(event.get("record_count", self._hits))
@@ -444,6 +474,7 @@ class DesktopController(Workspace):
         was_stopping = self._stopping
         self._elapsed_seconds = time.monotonic() - self._started_at
         self._running = False
+        self._active_sources = {}
         self._stopping = False
         payload = self._completed_payload or {}
         pdf = Path(payload.get("paths", {}).get("pdf", ""))

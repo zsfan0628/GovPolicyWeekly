@@ -79,6 +79,9 @@ class LinkItem:
     date_text: str = ""
     publish_date: object | None = None
     context: str = ""
+    date_reliable: bool = False
+    pinned: bool = False
+    in_navigation: bool = False
 
 
 @dataclass
@@ -253,10 +256,34 @@ def extract_links(html: str, base_url: str, only_same_site: bool = True, *, _sou
         title = clean_text(a.get("title") or a.get_text(" ", strip=True) or a.get("aria-label") or "")
         if not title or len(title) < 2:
             continue
-        parent_text = clean_text(a.parent.get_text(" ", strip=True) if a.parent else title)
-        date = parse_cn_date(parent_text + " " + title + " " + url)
+        row = a.find_parent(["li", "tr", "dd"]) or a.parent or a
+        parent_text = clean_text(row.get_text(" ", strip=True))
+        date_nodes = []
+        for node in row.select("time, span, em, font"):
+            raw = node.get("datetime") or node.get_text(" ", strip=True)
+            if re.fullmatch(r"(?:发布时间|发布日期|日期)?[:：\s]*20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?"
+                            r"(?:[T\s]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?", raw):
+                parsed = parse_cn_date(raw)
+                if parsed:
+                    date_nodes.append((node, parsed, raw))
+        date = date_nodes[0][1] if date_nodes else parse_cn_date(parent_text + " " + title + " " + url)
+        for node, _, raw in date_nodes:
+            if node.find_parent("a") is a:
+                title = re.sub(r"\s*" + re.escape(raw) + r"$", "", title).strip()
+        visible_date = parse_cn_date(parent_text.replace(title, "", 1))
+        date_text_only = parent_text.replace(title, "", 1)
+        single_link = len({node.get("href") for node in row.select("a[href]")}) <= 1
+        reliable = bool(single_link and ((date_nodes and len({node[1] for node in date_nodes}) == 1)
+                        or (visible_date and date and visible_date == date
+                            and re.search(r"20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}", date_text_only))))
+        classes = " ".join(row.get("class", []))
+        pinned = bool(re.search(r"(?:^|[\s_-])(?:top|pinned|zhiding)(?:$|[\s_-])", classes, re.I)
+                      or row.get("data-top") in {"true", "1"} or "置顶" in parent_text)
+        navigation = a.find_parent(["nav", "header", "footer"]) is not None
         date_text = date.strftime("%Y-%m-%d") if date else ""
-        results.append(LinkItem(title=title, url=url, publish_date=date, date_text=date_text, context=parent_text[:300]))
+        results.append(LinkItem(title=title, url=url, publish_date=date, date_text=date_text,
+                                context=parent_text[:300], date_reliable=reliable, pinned=pinned,
+                                in_navigation=navigation))
         seen.add(url)
         if a.get("data-channelid") and a.get("data-code") and a.parent and a.parent.select_one("i.plus, i.icon, ol"):
             website = soup.find(id="websiteCode") or soup.find("meta", attrs={"name": "websiteCode"})
@@ -271,10 +298,10 @@ def extract_links(html: str, base_url: str, only_same_site: bool = True, *, _sou
     return results
 
 
-def discover_channel_urls(html: str, base_url: str, max_channels: int = 12) -> list[str]:
+def discover_channel_urls(html: str, base_url: str, max_channels: int = 12, *, _links=None) -> list[str]:
     """从首页发现可能有用的栏目页。这里只发现栏目，详情页另行过滤。"""
     urls: list[str] = []
-    for item in extract_links(html, base_url, only_same_site=True):
+    for item in (_links if _links is not None else extract_links(html, base_url, only_same_site=True)):
         if is_probably_article_url(item.url) or Path(urlparse(item.url).path).suffix.lower() in ATTACHMENT_EXTS:
             continue
         combined = f"{item.title} {item.url}"

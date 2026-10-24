@@ -169,7 +169,7 @@ def export_docx(records: list[dict], path: str | Path, start, end, keywords: dic
 
     gen = doc.add_paragraph()
     gen.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = gen.add_run("说明：本报告由规则硬通过 + GPT-5.5复判生成；政策栏目中的通知、函、决定、公告、公示等正式文种按政策文件收录；模糊候选交由GPT复判；项目环评受理/拟审查/审批决定等单个项目公示默认不按政策文件收录。")
+    r = gen.add_run("说明：明确内容按规则筛选；模糊候选在启用模型且调用成功时由所选模型复判。政策栏目中的通知、函、决定、公告、公示等正式文种按政策文件收录；项目环评受理/拟审查/审批决定等单个项目公示默认不按政策文件收录。")
     r.font.size = Pt(10)
     r.font.color.rgb = RGBColor(100, 100, 100)
     set_run_font(r)

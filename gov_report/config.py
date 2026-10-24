@@ -5,6 +5,8 @@ from typing import Any
 
 import yaml
 
+from .scope import apply_scope
+
 
 def load_yaml(path: str | Path) -> Any:
     path = Path(path)
@@ -22,7 +24,11 @@ def load_sources(path: str | Path) -> list[dict[str, Any]]:
         source.setdefault("list_urls", [])
         source.setdefault("region", "")
         source.setdefault("department", "")
-    return data
+    scope_path = Path(path).parent / "crawl_scope.yaml"
+    if not scope_path.exists():
+        scope_path = Path(__file__).resolve().parent.parent / "config" / "crawl_scope.yaml"
+    policy = load_yaml(scope_path) if scope_path.exists() else {}
+    return [apply_scope(source, policy) if "crawl_scope" not in source else source for source in data]
 
 
 def load_keywords(path: str | Path) -> dict[str, list[str]]:

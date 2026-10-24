@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
-
-import requests
 
 from .llm_config import (
     ENABLE_LLM_CACHE,
@@ -21,6 +19,7 @@ from .llm_config import (
     OPENAI_TIMEOUT_SECONDS,
 )
 from .parser import clean_text
+from .llm_transport import ModelCallError, api_bases, post_judgment
 
 
 SYSTEM_PROMPT = """你是政府网站政策信息筛选专家。你的任务是判断网页是否应进入《农药化工企业政策与人事任免周报》。
@@ -155,11 +154,15 @@ JSON_SCHEMA: dict[str, Any] = {
 
 
 class LLMClassifier:
-    def __init__(self, cache_path: str | Path | None = None, enabled: bool = True) -> None:
+    def __init__(self, cache_path: str | Path | None = None, enabled: bool = True, cache_enabled: bool = True) -> None:
         self.enabled = enabled
         self.cache_path = Path(cache_path) if cache_path else None
         self.cache: dict[str, dict[str, Any]] = {}
-        if self.cache_path and ENABLE_LLM_CACHE:
+        self.cache_enabled = cache_enabled and ENABLE_LLM_CACHE
+        self._cache_lock = threading.Lock()
+        self._contract_lock = threading.Lock()
+        self._preferred_contract = None
+        if self.cache_path and self.cache_enabled:
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
             self._load_cache()
 
@@ -167,113 +170,129 @@ class LLMClassifier:
         return bool(self.enabled and OPENAI_API_KEY and OPENAI_API_KEY != "请在这里填写你的API_KEY")
 
     def classify_article(self, item: dict[str, Any]) -> dict[str, Any]:
-        """对单篇文章调用 GPT-5.5 复判。"""
+        """Classify with the selected model; transport errors are never semantic rejections."""
         if not self.is_available():
             return self._fallback_result("LLM未启用或API_KEY未填写")
 
         payload_text = self._build_user_prompt(item)
         cache_key = self._cache_key(item, payload_text)
-        if ENABLE_LLM_CACHE and cache_key in self.cache:
-            result = dict(self.cache[cache_key])
-            result["from_cache"] = True
-            return result
+        with self._cache_lock:
+            if self.cache_enabled and cache_key in self.cache:
+                result = dict(self.cache[cache_key])
+                result["from_cache"] = True
+                return result
 
         last_error = ""
         for attempt in range(1, OPENAI_MAX_RETRIES + 1):
             try:
-                if OPENAI_API_STYLE == "responses":
-                    result = self._call_responses_api(payload_text)
-                else:
-                    result = self._call_chat_completions_api(payload_text)
+                result = self._call_api(payload_text)
                 result = self._normalize_result(result)
                 result["from_cache"] = False
-                if ENABLE_LLM_CACHE:
-                    self.cache[cache_key] = result
-                    self._append_cache(cache_key, result)
+                result["call_succeeded"] = True
+                result["model"] = OPENAI_MODEL
+                if self.cache_enabled:
+                    with self._cache_lock:
+                        self.cache[cache_key] = result
+                        try:
+                            self._append_cache(cache_key, result)
+                        except OSError:
+                            self.cache_path = None
                 return result
-            except Exception as e:
-                last_error = str(e)
+            except ModelCallError as error:
+                last_error = str(error)
+                if not error.retryable:
+                    break
                 if attempt < OPENAI_MAX_RETRIES:
                     time.sleep(1.5 * attempt)
+            except Exception as error:
+                last_error = f"客户端处理异常（{type(error).__name__}），未记录原始响应以保护隐私"
+                break
 
         return self._fallback_result(f"LLM调用失败：{last_error}")
 
-    def _call_chat_completions_api(self, payload_text: str) -> dict[str, Any]:
-        url = urljoin(OPENAI_BASE_URL.rstrip("/") + "/", "chat/completions")
+    def _call_api(self, payload_text: str, style: str | None = None) -> dict[str, Any]:
+        configured_style = style or OPENAI_API_STYLE
+        if configured_style not in {"auto", "responses", "chat_completions"}:
+            raise ModelCallError("API 类型应为 auto、chat_completions 或 responses", kind="configuration")
+        styles = [configured_style] if configured_style in {"responses", "chat_completions"} else ["chat_completions", "responses"]
+        bases = api_bases(OPENAI_BASE_URL)
+        with self._contract_lock:
+            preferred = self._preferred_contract
+        if preferred and preferred[0] in bases and preferred[1] in styles:
+            bases.remove(preferred[0])
+            bases.insert(0, preferred[0])
+            styles.remove(preferred[1])
+            styles.insert(0, preferred[1])
+        errors = []
         headers = {
             "Authorization": f"Bearer {OPENAI_API_KEY}",
             "Content-Type": "application/json",
+            "Accept": "application/json",
         }
-        base_body = {
-            "model": OPENAI_MODEL,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": payload_text},
-            ],
-            "temperature": OPENAI_TEMPERATURE,
-        }
+        for base in bases:
+            for api_style in styles:
+                modes = ["json_schema", "json_object", "plain"]
+                temperature = api_style == "chat_completions"
+                if preferred and preferred[:2] == (base, api_style):
+                    modes.remove(preferred[2])
+                    modes.insert(0, preferred[2])
+                    temperature = preferred[3]
+                endpoint = "responses" if api_style == "responses" else "chat/completions"
+                for mode in modes:
+                    body = self._request_body(payload_text, api_style, mode, temperature)
+                    try:
+                        try:
+                            result = post_judgment(base + "/" + endpoint, headers, body, OPENAI_TIMEOUT_SECONDS, JSON_SCHEMA)
+                        except ModelCallError as error:
+                            if error.kind != "temperature" or not temperature:
+                                raise
+                            temperature = False
+                            body = {key: value for key, value in body.items() if key != "temperature"}
+                            result = post_judgment(base + "/" + endpoint, headers, body, OPENAI_TIMEOUT_SECONDS, JSON_SCHEMA)
+                    except ModelCallError as error:
+                        if error.retryable or error.kind in {"authorization", "configuration", "refusal", "incomplete"}:
+                            raise
+                        errors.append(f"/{endpoint} [{mode}] {error}")
+                        if error.kind == "endpoint":
+                            break
+                        continue
+                    with self._contract_lock:
+                        self._preferred_contract = (base, api_style, mode, temperature)
+                    result["api_style"] = api_style
+                    result["response_mode"] = mode
+                    result["api_prefix"] = "/v1" if base != api_bases(OPENAI_BASE_URL)[0] else "configured"
+                    return result
+        raise ModelCallError("；".join(errors[-6:]) or "未找到可用的模型生成接口")
 
-        # 优先使用 json_schema；如果中转接口不支持，再降级到 json_object；再不支持则要求模型纯 JSON 输出。
-        bodies = []
-        body_schema = dict(base_body)
-        body_schema["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "gov_policy_classification",
-                "strict": True,
-                "schema": JSON_SCHEMA,
-            },
-        }
-        bodies.append(body_schema)
+    def _request_body(self, payload_text: str, style: str, mode: str, temperature: bool) -> dict:
+        prompt = SYSTEM_PROMPT
+        if mode == "plain":
+            prompt += "\n请严格按以下 JSON Schema 字段输出一个 JSON 对象：" + json.dumps(JSON_SCHEMA, ensure_ascii=False)
+        body = {"model": OPENAI_MODEL, "stream": False}
+        messages = [{"role": "system", "content": prompt}, {"role": "user", "content": payload_text}]
+        if style == "responses":
+            body["input"] = messages
+            if mode == "json_schema":
+                body["text"] = {"format": {"type": "json_schema", "name": "gov_policy_classification",
+                                             "strict": True, "schema": JSON_SCHEMA}}
+            elif mode == "json_object":
+                body["text"] = {"format": {"type": "json_object"}}
+        else:
+            body["messages"] = messages
+            if temperature:
+                body["temperature"] = OPENAI_TEMPERATURE
+            if mode == "json_schema":
+                body["response_format"] = {"type": "json_schema", "json_schema": {
+                    "name": "gov_policy_classification", "strict": True, "schema": JSON_SCHEMA}}
+            elif mode == "json_object":
+                body["response_format"] = {"type": "json_object"}
+        return body
 
-        body_json_object = dict(base_body)
-        body_json_object["response_format"] = {"type": "json_object"}
-        bodies.append(body_json_object)
-
-        body_plain = dict(base_body)
-        body_plain["messages"] = [
-            {"role": "system", "content": SYSTEM_PROMPT + "\n请严格按以下JSON Schema字段输出：" + json.dumps(JSON_SCHEMA, ensure_ascii=False)},
-            {"role": "user", "content": payload_text},
-        ]
-        bodies.append(body_plain)
-
-        last_error = ""
-        for body in bodies:
-            resp = requests.post(url, headers=headers, json=body, timeout=OPENAI_TIMEOUT_SECONDS)
-            if resp.status_code >= 400:
-                last_error = resp.text[:1000]
-                continue
-            data = resp.json()
-            content = data["choices"][0]["message"].get("content", "")
-            return json.loads(_strip_json_code_fence(content))
-        raise RuntimeError(f"Chat Completions API调用失败：{last_error}")
+    def _call_chat_completions_api(self, payload_text: str) -> dict[str, Any]:
+        return self._call_api(payload_text, "chat_completions")
 
     def _call_responses_api(self, payload_text: str) -> dict[str, Any]:
-        url = urljoin(OPENAI_BASE_URL.rstrip("/") + "/", "responses")
-        headers = {
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json",
-        }
-        body = {
-            "model": OPENAI_MODEL,
-            "input": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": payload_text},
-            ],
-            "text": {
-                "format": {
-                    "type": "json_schema",
-                    "name": "gov_policy_classification",
-                    "strict": True,
-                    "schema": JSON_SCHEMA,
-                }
-            },
-        }
-        resp = requests.post(url, headers=headers, json=body, timeout=OPENAI_TIMEOUT_SECONDS)
-        resp.raise_for_status()
-        data = resp.json()
-        content = _extract_responses_text(data)
-        return json.loads(_strip_json_code_fence(content))
+        return self._call_api(payload_text, "responses")
 
     def _build_user_prompt(self, item: dict[str, Any]) -> str:
         text = clean_text(item.get("text", ""))[:LLM_MAX_BODY_CHARS]
@@ -308,11 +327,17 @@ class LLMClassifier:
     def _cache_key(self, item: dict[str, Any], payload_text: str) -> str:
         raw = "\n".join(
             [
-                "v5-project-eia-exclude",
+                "v6-validated-model-response",
+                OPENAI_MODEL,
+                OPENAI_BASE_URL,
+                OPENAI_API_STYLE,
+                str(OPENAI_TEMPERATURE),
+                SYSTEM_PROMPT,
+                json.dumps(JSON_SCHEMA, ensure_ascii=False, sort_keys=True),
                 str(item.get("url", "")),
                 str(item.get("title", "")),
                 str(item.get("publish_date", "")),
-                payload_text[:8000],
+                payload_text,
             ]
         )
         return hashlib.sha1(raw.encode("utf-8", errors="ignore")).hexdigest()
@@ -381,6 +406,7 @@ class LLMClassifier:
             "exclude_reason": reason,
             "confidence": 0.0,
             "from_cache": False,
+            "call_succeeded": False,
         }
 
     def _load_cache(self) -> None:
@@ -400,26 +426,3 @@ class LLMClassifier:
             return
         with self.cache_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"key": key, "result": result}, ensure_ascii=False) + "\n")
-
-
-def _strip_json_code_fence(text: str) -> str:
-    text = (text or "").strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    return text
-
-
-def _extract_responses_text(data: dict[str, Any]) -> str:
-    if data.get("output_text"):
-        return data["output_text"]
-    parts: list[str] = []
-    for item in data.get("output", []) or []:
-        for content in item.get("content", []) or []:
-            if content.get("type") in {"output_text", "text"}:
-                parts.append(content.get("text", ""))
-    return "\n".join(parts).strip()

@@ -178,7 +178,7 @@ class NavigationTests(unittest.TestCase):
     def test_dated_attachment_is_not_an_article_candidate(self):
         from gov_report.parser import LinkItem
         with tempfile.TemporaryDirectory() as folder:
-            crawler = GovCrawler([], {}, folder, use_llm=False, sleep=0)
+            crawler = GovCrawler([], {}, folder, use_llm=False, sleep=0, use_cache=False)
             start, _ = resolve_date_range(start_date="2026-10-16", end_date="2026-10-17")
             item = LinkItem(title="行政许可公告", url="https://example.gov.cn/202610/table.et", publish_date=start)
             self.assertFalse(crawler.should_fetch_candidate(item))
@@ -210,7 +210,7 @@ class NavigationTests(unittest.TestCase):
         source = {"name": "test", "base_url": root, "list_urls": []}
         with tempfile.TemporaryDirectory() as folder:
             crawler = GovCrawler([source], {}, Path(folder), max_channels_per_source=0,
-                                 max_detail_per_source=0, use_llm=False, sleep=0)
+                                 max_detail_per_source=0, use_llm=False, sleep=0, use_cache=False)
             crawler.client = Mock()
             crawler.client.fetch_text.side_effect = lambda url: (pages[url], url)
             crawler.log = Mock()
@@ -230,14 +230,15 @@ class NavigationTests(unittest.TestCase):
                  article_url: '<h1>人事任免通知</h1><p>发布时间：2026-10-17</p><article>人事任免正文。</article>'}
         with tempfile.TemporaryDirectory() as folder:
             source = {"name": "test", "base_url": root}
-            crawler = GovCrawler([source], {}, Path(folder), use_llm=False, sleep=0)
+            crawler = GovCrawler([source], {}, Path(folder), use_llm=False, sleep=0, use_cache=False)
             crawler.client = Mock()
             crawler.client.fetch_text.side_effect = lambda url: (pages[url], url)
             crawler.log = Mock()
             crawler.decide_with_optional_llm = Mock(return_value={"include": False})
             start, end = resolve_date_range(start_date="2026-10-16", end_date="2026-10-17")
             crawler.crawl_source(source, start, end)
-            self.assertEqual([x.args[0] for x in crawler.client.fetch_text.call_args_list], list(pages))
+            self.assertEqual([x.args[0] for x in crawler.client.fetch_text.call_args_list],
+                             [root, article_url, root + "page2"])
 
     def test_browser_error_page_is_a_failure_and_the_page_is_closed(self):
         client = HttpClient()
@@ -294,7 +295,7 @@ class NavigationTests(unittest.TestCase):
     def assert_crawler_visits_all(self, pages, root):
         with tempfile.TemporaryDirectory() as folder:
             source = {"name": "test", "base_url": root}
-            crawler = GovCrawler([source], {}, Path(folder), use_llm=False, sleep=0)
+            crawler = GovCrawler([source], {}, Path(folder), use_llm=False, sleep=0, use_cache=False)
             crawler.client = Mock()
             crawler.client.fetch_text.side_effect = lambda url: (pages[url], url)
             crawler.log = Mock()

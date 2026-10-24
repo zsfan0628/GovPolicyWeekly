@@ -103,6 +103,30 @@ class ControllerTests(unittest.TestCase):
         self.controller.add_log("ERROR", "server echoed private-local-key")
         self.assertNotIn("private-local-key", self.controller.logs.rows[-1]["message"])
 
+    def test_attachments_start_disabled_even_if_enabled_in_the_last_session(self):
+        self.assertFalse(self.controller.config["download_attachments"])
+        self.controller.store.save({"download_attachments": True, "use_llm": False})
+        another = DesktopController(Sources(), self.controller.store)
+        try:
+            self.assertFalse(another.initialSettings["download_attachments"])
+        finally:
+            another.shutdown()
+
+    def test_stage_statistics_and_concurrent_source_status_use_structured_events(self):
+        controller = self.controller
+        for source in ("one", "two"):
+            controller._progress(dict(event="source_started", source=source))
+        controller._progress(dict(event="stage_started", source="one", kind="list", column="政策文件"))
+        controller._progress(dict(event="stage_finished", source="one", kind="detail", seconds=1.5, cache_hit=True))
+        self.assertEqual(controller.currentColumn, "政策文件")
+        self.assertIn("one", controller.activeSources)
+        self.assertIn("two", controller.activeSources)
+        self.assertIn("缓存 1", controller.stageSummary)
+        controller._progress(dict(event="stage_finished", source="one", kind="llm", seconds=1, error=True))
+        self.assertIn("模型 0 成功 · 1 失败", controller.stageSummary)
+        controller._progress(dict(event="source_finished", source="one"))
+        self.assertNotIn("one", controller.activeSources)
+
     def test_progress_is_driven_by_structured_events_not_log_text(self):
         controller = self.controller
         controller.add_log("INFO", "命中 999 条")

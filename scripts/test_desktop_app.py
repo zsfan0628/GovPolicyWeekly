@@ -159,6 +159,7 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         assert find("apiUrl").property("text") == fixture.url + "/v1"
         assert find("apiKey").property("keyHidden")
         assert find("requestInterval").property("value") == 0
+        assert not find("attachments").property("checked")
         window.grabWindow().save(str(artifacts / "01-workspace.png"))
         passed("Real workspace restores configuration with masked credentials")
 
@@ -182,14 +183,31 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         pdf = pdf_path.read_bytes()
         assert pdf.startswith(b"%PDF-") and (fixture.url + "/art/2026/10/18/art_1_1.html").encode() in pdf
         data = json.loads((pdf_path.parent / "data.json").read_text(encoding="utf-8"))
-        assert len(data) == 2 and any(row["decision_source"].startswith("GPT") for row in data)
-        assert list(pdf_path.parent.rglob("attachments/**/*.pdf"))
+        assert len(data) == 2 and any(row["decision_source"] == "大模型复判" for row in data)
+        summary = json.loads((pdf_path.parent / "runtime_summary.json").read_text(encoding="utf-8"))
+        assert summary["workers"] == 3 and summary["stages"]["list"]["count"] >= 2
+        assert summary["stages"]["detail"]["count"] == 2
+        assert summary["llm"]["success_count"] == 1 and summary["llm"]["failure_count"] == 0
+        assert "/files/attachment.pdf" not in fixture.requests
+        assert "缓存" in backend.stageSummary
         wait_for(lambda: backend.reports.rowCount() > 0)
         assert any(row["reportPath"] == backend.lastPdf for row in backend.reports.rows)
         QTest.qWait(200)
         window.grabWindow().save(str(artifacts / "03-completed.png"))
         assert all(fixture.key not in row["message"] for row in backend.logs.rows)
-        passed("Real subprocess: website crawl, model classification, attachment, progress, linked PDF and history")
+        passed("Real subprocess: crawl, model, progress, linked PDF and history; attachments default off")
+
+        find("attachments").setProperty("checked", True)
+        click("startButton")
+        wait_for(lambda: backend.running)
+        wait_for(lambda: not backend.running, 60000)
+        assert backend.state == "已完成", backend.logs.rows[-10:]
+        assert list(pdf_path.parent.rglob("attachments/**/*.pdf"))
+        manifest = json.loads((pdf_path.parent / "attachment_downloads.json").read_text(encoding="utf-8"))
+        assert manifest and manifest[0]["attachments"][0]["local_path"]
+        assert "/files/attachment.pdf" in fixture.requests
+        assert len(fixture.posts) == 1, "Repeated input should reuse the shared model cache"
+        passed("Opt-in attachment download runs after PDF export and writes its manifest")
 
         find("apiKey").setProperty("text", "wrong-local-key")
         click("fetchModels")
@@ -207,6 +225,7 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         restored = DesktopController(Sources(fixture.sources), backend.store, fixture.root)
         assert restored.initialSettings["openai_api_key"] == fixture.key
         assert restored.modelOptions == backend.modelOptions
+        assert not restored.initialSettings["download_attachments"]
         restored.shutdown()
         passed("Atomic configuration persistence and restart restore")
 

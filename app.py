@@ -287,7 +287,7 @@ class GovReportApp(Tk):
 
         self.select_all_sources = BooleanVar(value=settings.get("select_all_sources", True))
         self.use_llm = BooleanVar(value=settings.get("use_llm", True))
-        self.download_attachments = BooleanVar(value=settings.get("download_attachments", True))
+        self.download_attachments = BooleanVar(value=False)
         self.browser_fallback = BooleanVar(value=settings.get("browser_fallback", True))
         self.strict_mode = BooleanVar(value=settings.get("strict_mode", True))
         self.verify_ssl = BooleanVar(value=settings.get("verify_ssl", True))
@@ -714,6 +714,8 @@ class GovReportApp(Tk):
             cmd.append("--no-llm")
         if not self.download_attachments.get():
             cmd.append("--no-download-attachments")
+        else:
+            cmd.append("--download-attachments")
         if not self.browser_fallback.get():
             cmd.append("--no-browser-fallback")
         if not self.strict_mode.get():

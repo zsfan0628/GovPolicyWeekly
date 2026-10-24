@@ -57,9 +57,13 @@ Legacy interfaces remain available as `qt_app.py` and `app.py` (the latter requi
 3. Choose an output folder and collection options, then start generation.
 4. Open the resulting PDF from the workspace or report history. Review warnings and source links before relying on a report.
 
-Collection does not impose channel or detail-count limits. Large selections can take time. It follows discovered public navigation and pagination; this does not guarantee every page on a site is discoverable. Browser fallback helps with JavaScript pages and some access restrictions, but cannot guarantee access to every site.
+Daily collection uses policy/personnel core columns rather than the full audit inventory: currently 410 of the 703 configured entries across 30 sites. It processes each list page immediately, uses conservative date-window pagination stopping, and runs up to three different sites concurrently. There are no article-count caps. Missing dates and inconsistent ordering prevent date-based early stopping; coverage still depends on discoverable public pages and site availability.
+
+Attachment downloads start **off on every application launch**. Original attachment links remain in the report. When enabled, downloads run after PDF export, so the PDF can be opened without waiting for them. Article/model caches are shared across report date ranges. Recent articles are re-fetched; older snapshots may be reused for up to seven days. See [collection performance and verification](docs/crawl-performance.md) for the trade-offs and full-scan controls.
 
 Rules retain clear matches and reject clear non-target content. Ambiguous candidates are passed to the selected model. Without a model, ambiguous candidates are excluded unless rule fallback is explicitly enabled.
+
+Model discovery does not verify generation. The client now negotiates Chat Completions / Responses and JSON output modes, and detects a website HTML response instead of reporting a generic JSON parse error. Failed calls are marked as **not reviewed**, not as model decisions to exclude. See [model connection checks](docs/model-connection.md).
 
 ## Privacy and Local Settings
 
@@ -81,7 +85,7 @@ python main.py --start-date 2026-10-01 --end-date 2026-10-07
 
 For model configuration, set `GOV_REPORT_OPENAI_BASE_URL`, `GOV_REPORT_OPENAI_API_KEY` and `GOV_REPORT_OPENAI_MODEL` in your own environment. Never commit their real values. The command line also supports the legacy application-folder settings file; the new workspace passes its saved configuration directly to its worker.
 
-Useful options include `--no-llm`, `--no-browser-fallback`, `--no-download-attachments` and `--allow-rule-fallback`. Run `python main.py --help` for the full list.
+Useful options include `--no-llm`, `--no-browser-fallback`, `--download-attachments`, `--workers 1`, `--no-cache`, `--full-scan` and `--allow-rule-fallback`. Attachments are not downloaded by default. Run `python main.py --help` for the full list.
 
 ## Tests and Builds
 

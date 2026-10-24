@@ -24,7 +24,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output-root", type=str, default="output", help="输出根目录")
     p.add_argument("--max-channels-per-source", type=int, default=0, help="每个站点自动发现的栏目数量上限；0为不限")
     p.add_argument("--max-detail-per-source", type=int, default=0, help="每个站点详情抓取数量上限；0为不限")
-    p.add_argument("--no-download-attachments", action="store_true", help="只记录附件链接，不下载附件")
+    attachments = p.add_mutually_exclusive_group()
+    attachments.add_argument("--download-attachments", action="store_true", help="PDF 生成后下载附件；默认只保留附件链接")
+    attachments.add_argument("--no-download-attachments", action="store_true", help="只记录附件链接，不下载附件（默认）")
+    p.add_argument("--workers", type=int, choices=range(1, 7), default=3, help="同时采集的站点数，默认3；同一站点仍顺序访问")
+    p.add_argument("--full-scan", action="store_true", help="维护模式：完整入口清单，不按日期停止翻页")
+    p.add_argument("--no-cache", action="store_true", help="关闭正文和模型判断缓存，用于核对采集结果")
+    p.add_argument("--cache-dir", type=str, default=None, help="跨日期范围共享的缓存目录，默认输出根目录下的 .cache")
     p.add_argument("--sleep", type=float, default=0.5, help="每次请求之间的间隔秒数")
     p.add_argument("--no-verify-ssl", action="store_true", help="关闭SSL证书校验，少数旧政府网站证书异常时可用")
     p.add_argument("--loose", action="store_true", help="宽松模式：接近旧版，会议/动态类也可能被收录；默认是严格模式")
@@ -63,7 +69,7 @@ def main() -> None:
         output_dir=out_dir,
         max_channels_per_source=args.max_channels_per_source,
         max_detail_per_source=args.max_detail_per_source,
-        download_attachments=not args.no_download_attachments,
+        download_attachments=args.download_attachments,
         sleep=args.sleep,
         verify_ssl=not args.no_verify_ssl,
         strict=not args.loose,
@@ -71,6 +77,10 @@ def main() -> None:
         browser_fallback=(args.browser_fallback and not args.no_browser_fallback),
         allow_rule_fallback=args.allow_rule_fallback,
         progress_callback=progress if args.progress_json else None,
+        max_workers=args.workers,
+        full_scan=args.full_scan,
+        cache_dir=args.cache_dir,
+        use_cache=not args.no_cache,
     )
 
     records = crawler.crawl(start, end, source_name=args.source)
@@ -85,7 +95,15 @@ def main() -> None:
     records = sorted(records, key=lambda x: (x.get("publish_date", ""), x.get("source_name", "")), reverse=True)
 
     progress({"event": "export_started", "record_count": len(records)})
+    export_start = time.perf_counter()
     paths = export_all(records, out_dir, start, end, keywords)
+    export_seconds = time.perf_counter() - export_start
+    progress({"event": "report_ready", "record_count": len(records), "paths": paths,
+              "seconds": export_seconds})
+    crawler.download_record_attachments(records)
+    if args.download_attachments and paths.get("json"):
+        Path(paths["json"]).write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+    crawler.write_log()
 
     elapsed = time.perf_counter() - run_start_ts
     elapsed_text = format_duration(elapsed)
@@ -95,6 +113,11 @@ def main() -> None:
         "record_count": len(records),
         "start_date": f"{start:%Y-%m-%d %H:%M:%S}",
         "end_date": f"{end:%Y-%m-%d %H:%M:%S}",
+        "workers": args.workers,
+        "full_scan": args.full_scan,
+        "stages": crawler.metrics.snapshot(),
+        "llm": crawler.llm_statistics(),
+        "export_seconds": round(export_seconds, 3),
     }
     (out_dir / "runtime_summary.json").write_text(json.dumps(runtime_info, ensure_ascii=False, indent=2), encoding="utf-8")
     with (out_dir / "crawl_log.txt").open("a", encoding="utf-8") as f:

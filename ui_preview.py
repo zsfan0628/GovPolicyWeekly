@@ -8,7 +8,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import yaml
+from gov_report.config import load_sources
+from gov_report.scope import core_urls
 from PySide6.QtCore import (
     QAbstractListModel, QModelIndex, QObject, Property, QSortFilterProxyModel,
     QRectF, Qt, QTimer, QUrl, Signal, Slot,
@@ -64,14 +65,14 @@ class Sources(Rows):
     selectionChanged = Signal()
 
     def __init__(self, path=None):
-        sources = yaml.safe_load(Path(path or ROOT / "config" / "sources.yaml").read_text(encoding="utf-8"))
+        sources = load_sources(path or ROOT / "config" / "sources.yaml")
         self.source_data = sources
         regions = ["国家", "江苏", "湖北", "黑龙江", "南通"]
         sources = sorted(sources, key=lambda row: regions.index(row["region"]) if row.get("region") in regions else len(regions))
         rows = [dict(
             siteId=i, siteName=row["name"], region=row.get("region", ""),
             department=row.get("department", ""), siteUrl=row["base_url"],
-            channels=len(row.get("list_urls", [])), selected=True,
+            channels=len(core_urls(row)), selected=True,
         ) for i, row in enumerate(sources)]
         super().__init__(rows, ["siteId", "siteName", "region", "department", "siteUrl", "channels", "selected"])
 
@@ -196,6 +197,9 @@ class Workspace(QObject):
         self._phase = "准备就绪"
         self._output = str(APP_DIR / "output")
         self._active = []
+        self._stage_stats = {}
+        self._active_sources = {}
+        self._current_column = ""
 
     @Property(bool, constant=True)
     def isDemo(self):
@@ -244,6 +248,29 @@ class Workspace(QObject):
     @Property(str, notify=changed)
     def phase(self):
         return self._phase
+
+    @Property(str, notify=changed)
+    def stageSummary(self):
+        labels = {"list": "列表", "detail": "正文", "llm": "模型", "attachment": "附件"}
+        rows = []
+        for kind, label in labels.items():
+            data = self._stage_stats.get(kind, {})
+            if kind == "llm":
+                errors = data.get("errors", 0)
+                successes = max(0, data.get("count", 0) - errors)
+                rows.append(f"模型 {successes} 成功 · {errors} 失败 · {data.get('seconds', 0):.1f} s")
+            else:
+                rows.append(f"{label} {data.get('count', 0)}  ·  {data.get('seconds', 0):.1f} s")
+        hits = sum(data.get("cache_hits", 0) for data in self._stage_stats.values())
+        return "\n".join(rows) + f"\n缓存 {hits}  ·  失败 {getattr(self, '_errors', 0)}"
+
+    @Property(str, notify=changed)
+    def currentColumn(self):
+        return self._current_column
+
+    @Property(str, notify=changed)
+    def activeSources(self):
+        return "\n".join(f"{name} · {phase}" for name, phase in self._active_sources.items())
 
     @Property(int, notify=changed)
     def done(self):

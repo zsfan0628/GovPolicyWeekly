@@ -130,7 +130,7 @@ class GovPolicyQtApp(QWidget):
         run_group = QGroupBox("运行设置")
         run_layout = QGridLayout(run_group)
         self.download_attachments = QCheckBox("下载附件")
-        self.download_attachments.setChecked(True)
+        self.download_attachments.setChecked(False)
         self.browser_fallback = QCheckBox("浏览器兜底")
         self.browser_fallback.setChecked(True)
         self.strict_mode = QCheckBox("严格模式")
@@ -317,6 +317,8 @@ class GovPolicyQtApp(QWidget):
             cmd.append("--no-llm")
         if not self.download_attachments.isChecked():
             cmd.append("--no-download-attachments")
+        else:
+            cmd.append("--download-attachments")
         if not self.browser_fallback.isChecked():
             cmd.append("--no-browser-fallback")
         if not self.strict_mode.isChecked():

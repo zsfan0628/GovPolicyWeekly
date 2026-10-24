@@ -57,9 +57,13 @@ python scripts/create_mac_preview_app.py --production
 3. 选择输出目录与运行选项，点击“开始生成”。
 4. 从工作台或历史报告打开 PDF，结合警告与原文链接人工复核。
 
-栏目与详情不设置数量上限，大范围任务可能耗时较长。程序遍历可发现的公开栏目与分页，不代表能找到每个网站的所有页面。浏览器兜底可辅助读取 JavaScript 页面及部分受限入口，但不保证所有站点均可访问。
+日常采集改为政策与人事核心栏目：当前从 30 个站点的 703 个预设入口中选用 410 个。读完一页就筛日期、处理文章；在日期连续倒序、完整可识别时保守停止历史翻页，最多同时处理三个不同站点，不给文章数量设上限。日期缺失或排序混乱时不按日期提前停止；覆盖率仍取决于可发现的公开页面和站点可访问性。
+
+**每次启动软件时，“下载附件”默认关闭。** 报告仍保留附件原始链接；手动开启后先生成 PDF，再下载附件，不必等待附件下载完才能打开 PDF。正文和模型判断缓存跨日期范围复用，近期文章重新抓取，较旧文章的快照最多复用七天。完整遍历、禁用缓存及具体取舍见[采集性能与核对说明](docs/crawl-performance.md)。
 
 明确命中的内容由规则保留，明确不属于目标的内容被排除；模糊候选交给所选模型复判。未启用模型时，模糊候选默认排除，除非显式开启规则兜底。
+
+“获取模型”成功不等于生成接口可用。客户端会自动协商 Chat Completions / Responses 与 JSON 输出模式，并识别误返回的网站 HTML 页面。调用失败标为**未完成复判**，不再写成模型认为应该排除。短篇验证方式见[模型连接检查](docs/model-connection.md)。
 
 ## 隐私与本地配置
 
@@ -81,7 +85,7 @@ python main.py --start-date 2026-10-01 --end-date 2026-10-07
 
 在自己的环境中设置 `GOV_REPORT_OPENAI_BASE_URL`、`GOV_REPORT_OPENAI_API_KEY` 和 `GOV_REPORT_OPENAI_MODEL`，不要提交真实值。命令行也支持旧版应用目录配置；新工作台会把保存的配置直接传给独立采集进程。
 
-常用参数包括 `--no-llm`、`--no-browser-fallback`、`--no-download-attachments` 和 `--allow-rule-fallback`，完整列表见 `python main.py --help`。
+常用参数包括 `--no-llm`、`--no-browser-fallback`、`--download-attachments`、`--workers 1`、`--no-cache`、`--full-scan` 和 `--allow-rule-fallback`。默认不下载附件，完整列表见 `python main.py --help`。
 
 ## 测试与构建
 

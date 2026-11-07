@@ -1,8 +1,13 @@
-# GovPolicyWeekly v1.2.0
+# GovPolicyWeekly v1.3.0
 
 ## English
 
-Model API compatibility fixes and focused policy/personnel collection in the glass-style desktop workspace.
+Desktop layout fixes, linked PDF reports and recoverable collection tasks in the original glass-style workspace.
+
+- Fix overlapping date presets and request-interval controls. Keep comfortable row spacing and scrolling at smaller window sizes, and align single-line and wrapped log messages.
+- Support the standard window-close shortcut, including Command+W on macOS, with confirmation while collecting. Retain site selection without separate connectivity probes.
+- Embed Source Han Sans CN in PDF reports, with compact section bands, shaded summaries and clickable original titles in both the index and article details.
+- Add confirmed real model-call tests, saved task checkpoints, coverage details, interrupted-task recovery and retries for failed model decisions.
 
 - Automatically negotiate Chat Completions / Responses and JSON output modes. Detect HTML returned by a website root, and try the same service's `/v1` path when appropriate.
 - Separate unsuccessful model calls from valid decisions to exclude an article. Show successful and failed reviews in progress and saved run statistics.
@@ -10,7 +15,7 @@ Model API compatibility fixes and focused policy/personnel collection in the gla
 - Reuse article/model caches across date ranges. Recent articles are re-fetched; older snapshots can be reused for up to seven days. Full-scan and no-cache controls remain available.
 - Attachment downloads start off on every launch. When enabled, PDF export finishes before attachment downloads.
 
-- **Installer:** `GovPolicyWeekly_Setup_1.2.0.exe`.
+- **Installer:** `GovPolicyWeekly_Setup_1.3.0.exe`.
 - **Portable:** fully extract `GovPolicyWeekly_windows_portable.zip`, then run `GovPolicyWeekly/GovPolicyWeekly.exe`. Keep all supporting folders.
 - **Checksums:** `SHA256SUMS.txt`.
 
@@ -22,7 +27,12 @@ Publication is gated on regression tests, local-fixture desktop integration, sou
 
 ## 简体中文
 
-本版主要修复大模型接口调用，并包含政策、人事核心栏目采集优化。
+本版保留原有玻璃质感界面，更新界面排版、PDF 样式和任务恢复能力。
+
+- 修复日期快捷按钮、请求间隔控件与下一行挤压的问题；统一控件间距，小窗口使用滚动展示，日志单行与多行保持对齐。
+- 支持系统标准关闭快捷键（macOS 为 Command+W），采集过程中先确认再退出；移除独立连通检测，保留站点搜索和勾选。
+- PDF 内嵌思源黑体，采用清晰的条目标题带和灰底摘要；信息清单与详情标题均可跳转原文。
+- 增加需确认的实际模型调用测试、采集覆盖详情、任务检查点与断点恢复，支持仅重试失败的模型判断。
 
 - 自动协商 Chat Completions / Responses 和 JSON 输出模式；识别错误返回的网站 HTML，必要时尝试同服务的 `/v1` 路径。
 - 调用失败明确标为“未完成复判”，不再误写为“模型判断排除”；界面、日志和运行摘要分别统计成功与失败。
@@ -32,7 +42,7 @@ Publication is gated on regression tests, local-fixture desktop integration, sou
 
 下载方式：
 
-- `GovPolicyWeekly_Setup_1.2.0.exe`：安装版，双击安装后从开始菜单或桌面快捷方式打开。
+- `GovPolicyWeekly_Setup_1.3.0.exe`：安装版，双击安装后从开始菜单或桌面快捷方式打开。
 - `GovPolicyWeekly_windows_portable.zip`：便携版，完整解压后打开 `GovPolicyWeekly/GovPolicyWeekly.exe`。
 - `SHA256SUMS.txt`：下载文件的 SHA-256 校验值。
 

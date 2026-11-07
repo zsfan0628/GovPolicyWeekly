@@ -77,7 +77,7 @@ REPORT_COLUMNS = [
 ]
 
 
-def export_all(records: list[dict], output_dir: str | Path, start, end, keywords: dict[str, list[str]]) -> dict[str, str]:
+def export_all(records: list[dict], output_dir: str | Path, start, end, keywords: dict[str, list[str]], report_context: dict | None = None) -> dict[str, str]:
     records = [sanitize_record(r) for r in records]
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -92,10 +92,8 @@ def export_all(records: list[dict], output_dir: str | Path, start, end, keywords
     docx_path = output_dir / f"{basename}.docx"
     export_docx(records, docx_path, start, end, keywords)
 
-    pdf_path = convert_docx_to_pdf(docx_path, output_dir)
-    if not pdf_path:
-        pdf_path = output_dir / f"{basename}.pdf"
-        export_pdf_direct(records, pdf_path, start, end, keywords)
+    pdf_path = output_dir / f"{basename}.pdf"
+    export_pdf_direct(records, pdf_path, start, end, keywords, report_context)
 
     return {
         "json": str(json_path),
@@ -470,150 +468,10 @@ def convert_docx_to_pdf(docx_path: str | Path, out_dir: str | Path) -> Path | No
     return pdf_path if pdf_path.exists() else None
 
 
-def export_pdf_direct(records: list[dict], path: str | Path, start, end, keywords: dict[str, list[str]]) -> Path:
-    """使用 reportlab 直接生成 PDF，避免依赖 LibreOffice。"""
-    from reportlab.lib import colors
-    from reportlab.lib.enums import TA_CENTER
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-    from reportlab.lib.units import mm
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-    from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
-
-    doc = SimpleDocTemplate(
-        str(path),
-        pagesize=A4,
-        leftMargin=16 * mm,
-        rightMargin=16 * mm,
-        topMargin=16 * mm,
-        bottomMargin=16 * mm,
-        title="农药化工企业政策与人事任免信息周报",
-    )
-    styles = getSampleStyleSheet()
-    base = ParagraphStyle(
-        "CNBase",
-        parent=styles["Normal"],
-        fontName="STSong-Light",
-        fontSize=9.5,
-        leading=14,
-        wordWrap="CJK",
-        spaceAfter=5,
-    )
-    title_style = ParagraphStyle(
-        "CNTitle",
-        parent=base,
-        fontSize=18,
-        leading=24,
-        alignment=TA_CENTER,
-        spaceAfter=8,
-    )
-    subtitle_style = ParagraphStyle(
-        "CNSubtitle",
-        parent=base,
-        fontSize=10,
-        leading=14,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#555555"),
-        spaceAfter=10,
-    )
-    heading = ParagraphStyle("CNHeading", parent=base, fontSize=13, leading=18, spaceBefore=8, spaceAfter=6)
-    item_title = ParagraphStyle("CNItemTitle", parent=base, fontSize=11, leading=16, spaceBefore=8, spaceAfter=4)
-    small = ParagraphStyle("CNSmall", parent=base, fontSize=8, leading=11)
-
-    story = [
-        Paragraph("农药化工企业政策与人事任免信息周报", title_style),
-        Paragraph(f"统计周期：{start:%Y年%m月%d日} 至 {end:%Y年%m月%d日}", subtitle_style),
-        Paragraph(
-            "说明：本报告由规则硬通过 + GPT复判生成；政策栏目中的通知、函、决定、公告、公示等正式文种按政策文件收录；模糊候选交由GPT复判。",
-            small,
-        ),
-        Spacer(1, 5),
-        Paragraph("一、本周概览", heading),
-    ]
-
-    overview_rows = _pdf_overview_rows(records)
-    overview_table = Table([[Paragraph(str(a), base), Paragraph(str(b), base)] for a, b in overview_rows], colWidths=[65 * mm, 95 * mm])
-    overview_table.setStyle(
-        TableStyle(
-            [
-                ("FONTNAME", (0, 0), (-1, -1), "STSong-Light"),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#b8c7d6")),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d9eaf7")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-            ]
-        )
-    )
-    story.append(overview_table)
-    story.append(Spacer(1, 8))
-    story.append(Paragraph("二、信息清单", heading))
-
-    list_rows = [[
-        Paragraph("日期", small),
-        Paragraph("发布单位", small),
-        Paragraph("类型", small),
-        Paragraph("标题", small),
-    ]]
-    for r in records:
-        list_rows.append(
-            [
-                Paragraph(_pdf_text(r.get("publish_date", "")), small),
-                Paragraph(_pdf_text(r.get("source_name", "")), small),
-                Paragraph(_pdf_text(r.get("category", "")), small),
-                Paragraph(_pdf_link(r.get("title", ""), r.get("url", "")), small),
-            ]
-        )
-    if len(list_rows) == 1:
-        list_rows.append([Paragraph("本周期内未筛选到符合关键词规则的条目。", base), "", "", ""])
-    list_table = Table(list_rows, colWidths=[23 * mm, 37 * mm, 25 * mm, 78 * mm], repeatRows=1)
-    list_table.setStyle(
-        TableStyle(
-            [
-                ("FONTNAME", (0, 0), (-1, -1), "STSong-Light"),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#c7c7c7")),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d9eaf7")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 4),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ]
-        )
-    )
-    story.append(list_table)
-    story.append(PageBreak())
-    story.append(Paragraph("三、详细条目", heading))
-
-    if not records:
-        story.append(Paragraph("本周期内未筛选到符合关键词规则的条目。", base))
-    else:
-        for idx, record in enumerate(records, 1):
-            story.append(Paragraph(f"{idx}. {_pdf_text(record.get('title', ''))}", item_title))
-            story.append(Paragraph(f"发布时间：{_pdf_text(record.get('publish_date', ''))}    发布单位：{_pdf_text(record.get('source_name', ''))}    类型：{_pdf_text(record.get('category', ''))}", base))
-            story.append(Paragraph(f"相关方向：{_pdf_text(record.get('related_directions', ''))}", base))
-            story.append(Paragraph(f"判定方式：{_pdf_text(record.get('decision_source', ''))}", base))
-            if record.get("llm_reason"):
-                story.append(Paragraph(f"GPT判断理由：{_pdf_text(record.get('llm_reason', ''))}", base))
-            if record.get("summary"):
-                story.append(Paragraph(f"精简摘要：{_pdf_text(record.get('summary', ''))}", base))
-            if record.get("change_points"):
-                story.append(Paragraph(f"变动/调整提示：{_pdf_text(record.get('change_points', ''))}", base))
-            if record.get("url"):
-                story.append(Paragraph(f"原文链接：{_pdf_text(record.get('url', ''))}", small))
-            attachments = record.get("attachments") or []
-            if attachments:
-                att_text = "；".join([_pdf_text(a.get("name") or "附件") for a in attachments])
-                story.append(Paragraph(f"附件：{att_text}", small))
-            story.append(Spacer(1, 5))
-
-    doc.build(story)
-    return path
+def export_pdf_direct(records: list[dict], path: str | Path, start, end, keywords: dict[str, list[str]], report_context: dict | None = None) -> Path:
+    """Generate the same embedded-font PDF on every supported desktop platform."""
+    from .pdf_report import export_report
+    return export_report([sanitize_record(r) for r in records], path, start, end, report_context)
 
 
 def _pdf_overview_rows(records: list[dict]) -> list[tuple[str, int]]:

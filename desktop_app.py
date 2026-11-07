@@ -18,6 +18,7 @@ def main():
         return run_self_test(Path(sys.argv[2]))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--smoke-test", action="store_true")
+    parser.add_argument("--design-preview", action="store_true", help="Preview the compact sidebar workspace")
     parser.add_argument("--artifacts", type=Path, default=Path("release-check/desktop"))
     args = parser.parse_args()
     from gov_report.desktop import DesktopController
@@ -42,7 +43,7 @@ def main():
         from scripts.test_desktop_app import run_checks
         check = lambda *values: run_checks(*values, fixture=fixture)
     try:
-        return launch_workspace(factory, check, args.artifacts)
+        return launch_workspace(factory, check, args.artifacts, design_preview=args.design_preview)
     finally:
         if fixture:
             fixture.close()

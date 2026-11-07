@@ -11,6 +11,7 @@ datas = [
     (str(project_dir / "config"), "config"),
     (str(project_dir / "input"), "input"),
     (str(project_dir / "ui" / "preview"), "ui/preview"),
+    (str(project_dir / "assets" / "fonts"), "assets/fonts"),
 ]
 
 hiddenimports = ["main", "qt_app", "ui_preview", "gov_report.desktop"]

@@ -9,6 +9,7 @@ from PySide6.QtTest import QTest
 
 
 def run_checks(app, window, backend, sources, source_filter, artifacts, warnings):
+    from scripts.check_workspace_spacing import check_workspace_spacing, reveal_config_item
     artifacts.mkdir(parents=True, exist_ok=True)
     checks = []
 
@@ -29,6 +30,7 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         raise AssertionError(f"Missing UI object: {name}")
 
     def click(item, x=None, y=None):
+        reveal_config_item(window, item)
         point = item.mapToScene(QPointF(
             item.width() / 2 if x is None else x,
             item.height() / 2 if y is None else y,
@@ -64,6 +66,8 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         assert window.property("wallpaperReady"), "Bundled wallpaper did not load"
         capture("01-workspace")
         passed("Startup finishes and desktop workspace renders")
+        check_workspace_spacing(window, artifacts)
+        passed('Configuration spacing and scroll reachability at three window sizes')
 
         navigation = find("mainNavigation")
         if backend.shaderSupported:

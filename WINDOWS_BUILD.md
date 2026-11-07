@@ -63,14 +63,9 @@ GovPolicyWeekly_windows_portable.zip
 
 ## 2. PDF 生成
 
-PDF 不再强制依赖 LibreOffice。
-
-程序会先尝试：
-
-1. 如果检测到 LibreOffice，就把 DOCX 转成 PDF。
-2. 如果没有 LibreOffice，就使用内置 reportlab 引擎直接生成 PDF。
-
-因此默认打包不需要安装 LibreOffice。
+PDF 统一由内置 ReportLab 引擎生成，不再根据 LibreOffice 是否安装切换模板。
+思源黑体字体及授权文件随 `assets/fonts` 打包，使用者无需额外安装字体。
+详情标题、清单标题和附件名称都保留原文链接，编号可以跳转到报告内对应条目。
 
 ## 3. PowerShell 方式
 
@@ -99,9 +94,9 @@ installer_output
 GovPolicyWeekly_Setup_1.0.0.exe
 ```
 
-## 4. 可选：使用 LibreOffice 转 PDF
+## 4. 旧版 LibreOffice 打包参数
 
-如果你特别想保留 DOCX 转 PDF 的排版方式，可以先手动安装 LibreOffice，然后运行：
+以下参数只保留作旧版兼容。即使打包 LibreOffice，当前正常导出也不会改为 Word 转 PDF：
 
 ```powershell
 .\build_windows.ps1 -BundleLibreOffice

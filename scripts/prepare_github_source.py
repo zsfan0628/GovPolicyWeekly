@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DEST = ROOT / '.github-publish' / 'GovPolicyWeekly'
 FILES = [
     '.gitignore', 'README.md', 'README.zh-CN.md', 'WINDOWS_BUILD.md', 'CHANGELOG.md', 'RELEASE_NOTES.md',
-    'app.py', 'qt_app.py', 'desktop_app.py', 'ui_preview.py', 'main.py', 'GovPolicyWeekly.spec', 'GovPolicyWeekly.iss',
+    'app.py', 'qt_app.py', 'desktop_app.py', 'ui_preview.py', 'main.py', 'GovPolicyWeekly.spec', 'GovPolicyWeekly.iss', 'WorkspacePreview.command',
     'build_windows.bat', 'build_windows.ps1', 'requirements.txt', 'requirements-windows-build.txt',
 ]
 FOLDERS = ['.github', 'config', 'gov_report', 'input', 'scripts', 'tests', 'docs']
@@ -73,6 +73,8 @@ def collect_paths(root: Path) -> list[Path]:
                      and '__pycache__' not in path.parts and path.suffix in {'.py', '.ps1', '.yml', '.yaml', '.txt', '.md'})
     paths.extend(path for path in (root / 'ui' / 'preview').rglob('*') if path.is_file()
                  and (path.suffix in {'.qml', '.qsb', '.frag', '.svg', '.jpg', '.md'} or path.name == 'LICENSE'))
+    paths.extend(path for path in (root / 'assets' / 'fonts').glob('*')
+                 if path.is_file() and path.suffix in {'.ttf', '.txt', '.md'})
     return sorted(set(paths))
 
 

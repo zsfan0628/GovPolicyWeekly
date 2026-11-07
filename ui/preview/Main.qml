@@ -6,10 +6,11 @@ import QtQuick.Window
 ApplicationWindow {
     id: root
     objectName: "previewWindow"
-    width: 1280; height: 900
+    property bool workspaceV3: false
+    width: workspaceV3 ? 1360 : 1280; height: 900
     minimumWidth: 1020; minimumHeight: 740
     visible: true
-    title: preview.isDemo ? "政策周报 · 界面预览" : "政策周报"
+    title: workspaceV3 ? "政策周报 · 新工作台预览" : preview.isDemo ? "政策周报 · 界面预览" : "政策周报"
     color: "#f3f6f2"
     palette.window: "#f3f6f2"
     palette.windowText: "#2a2b2a"
@@ -98,6 +99,11 @@ ApplicationWindow {
         if (settingsReady) preview.saveConfig(root.currentOptions())
         if (preview.running) { close.accepted = false; exitDialog.open() }
     }
+    Shortcut {
+        sequences: [StandardKey.Close]
+        context: Qt.WindowShortcut
+        onActivated: root.close()
+    }
     Timer { id: saveTimer; interval: 450; onTriggered: preview.saveConfig(root.currentOptions()) }
     Connections { target: sources; function onSelectionChanged() { root.queueSave() } }
     SequentialAnimation {
@@ -142,8 +148,22 @@ ApplicationWindow {
         textureSize: Qt.size(root.width, root.height)
     }
     Rectangle {
-        y: 80; width: parent.width; height: parent.height - y
-        color: "#f7faf8"
+        y: root.workspaceV3 ? 0 : 80; width: parent.width; height: parent.height - y
+        color: root.workspaceV3 ? "#ffffff" : "#f7faf8"
+    }
+    Loader {
+        id: workspaceSidebar; objectName: "workspaceSidebar"
+        active: root.workspaceV3; visible: active
+        width: root.width < 1180 ? 160 : 184; height: parent.height
+        opacity: root.reveal
+        sourceComponent: WorkspaceSidebar {
+            anchors.fill: parent
+            currentIndex: root.page
+            selectedCount: sources.selectedCount; totalCount: sources.total
+            running: preview.running
+            onChosen: function(index) { root.page = index }
+            onReplayRequested: root.replayIntro()
+        }
     }
 
     component SmallLabel: Text {
@@ -174,8 +194,11 @@ ApplicationWindow {
         property string marker: ""
         Layout.fillWidth: true
         spacing: 9
-        Text { text: marker; color: "#7d807d"; font.pixelSize: 11; font.family: "Menlo" }
-        Text { text: title; color: "#2d2e2d"; font.pixelSize: 13; font.weight: Font.DemiBold; Layout.fillWidth: true }
+        Layout.minimumHeight: Math.max(32, implicitHeight)
+        Text { text: marker; visible: !root.workspaceV3; color: "#7d807d"; font.pixelSize: 11; font.family: "Menlo" }
+        Icon { visible: root.workspaceV3; name: marker === "01" ? "calendar-days" : marker === "02" ? "sparkles" : marker === "03" ? "sliders-horizontal" : "globe"; width: 15; height: 15; tint: "#6c8494" }
+        Text { text: title; color: "#2d2e2d"; font.pixelSize: 13; font.weight: Font.DemiBold }
+        Rectangle { Layout.fillWidth: true; height: 1; color: "#dce4e7"; Layout.leftMargin: 4; Layout.rightMargin: 6 }
     }
     component Separator: Rectangle {
         Layout.fillWidth: true
@@ -186,6 +209,7 @@ ApplicationWindow {
         property string label: ""
         property alias checked: switcher.checked
         Layout.fillWidth: true
+        Layout.minimumHeight: 32
         spacing: 8
         Text { text: label; color: "#484a48"; font.pixelSize: 12; Layout.fillWidth: true }
         Toggle { id: switcher; Accessible.name: label }
@@ -194,11 +218,13 @@ ApplicationWindow {
     ColumnLayout {
         id: shell
         anchors.fill: parent
+        anchors.leftMargin: root.workspaceV3 ? workspaceSidebar.width : 0
         spacing: 0
         opacity: root.reveal
         scale: 0.988 + 0.012 * root.reveal
         Item {
-            Layout.fillWidth: true; Layout.preferredHeight: 80
+            visible: !root.workspaceV3
+            Layout.fillWidth: true; Layout.preferredHeight: root.workspaceV3 ? 0 : 80
             RowLayout {
                 anchors { left: parent.left; leftMargin: 28; verticalCenter: parent.verticalCenter }
                 spacing: 10
@@ -215,14 +241,17 @@ ApplicationWindow {
                     Text { text: "POLICY WEEKLY"; color: "#51665a"; font.pixelSize: 9 }
                 }
             }
-            GlassNavigation {
-                id: mainNavigation; objectName: "mainNavigation"
+            Loader {
                 anchors.centerIn: parent
-                currentIndex: root.page
-                reducedMotion: root.reducedMotion
-                reducedTransparency: root.reducedTransparency
-                texture: backdropTexture; scene: root.contentItem
-                onChosen: function(index) { root.page = index }
+                active: !root.workspaceV3
+                sourceComponent: GlassNavigation {
+                    id: mainNavigation; objectName: "mainNavigation"
+                    currentIndex: root.page
+                    reducedMotion: root.reducedMotion
+                    reducedTransparency: root.reducedTransparency
+                    texture: backdropTexture; scene: root.contentItem
+                    onChosen: function(index) { root.page = index }
+                }
             }
             RowLayout {
                 anchors { right: parent.right; rightMargin: 28; verticalCenter: parent.verticalCenter }
@@ -238,14 +267,14 @@ ApplicationWindow {
                 Layout.fillWidth: true; height: 1; color: "#80ffffff"
             }
             Item {
-                Layout.fillWidth: true; Layout.preferredHeight: 64
+                Layout.fillWidth: true; Layout.preferredHeight: root.workspaceV3 ? 64 : 54
                 ColumnLayout {
-                    anchors { left: parent.left; leftMargin: 30; verticalCenter: parent.verticalCenter }
+                    anchors { left: parent.left; leftMargin: root.workspaceV3 ? 22 : 30; verticalCenter: parent.verticalCenter }
                     spacing: 6
-                    Text { text: root.pageTitles[root.page]; color: "#252625"; font.pixelSize: 23; font.weight: Font.DemiBold }
+                    Text { text: root.pageTitles[root.page]; color: "#252625"; font.pixelSize: 20; font.weight: Font.DemiBold }
                 }
                 RowLayout {
-                    anchors { right: parent.right; rightMargin: 30; verticalCenter: parent.verticalCenter }
+                    anchors { right: parent.right; rightMargin: root.workspaceV3 ? 22 : 30; verticalCenter: parent.verticalCenter }
                     spacing: 12
                     AppButton {
                         objectName: "openLastPdf"; visible: !preview.isDemo && preview.lastPdf.length > 0
@@ -258,7 +287,7 @@ ApplicationWindow {
                         text: preview.stopping ? "正在停止" : preview.running ? "停止" : preview.isDemo ? "开始演示" : "开始生成"
                         iconName: preview.running ? "square" : "play"
                         tone: preview.running ? "danger" : "primary"
-                        enabled: !preview.stopping && !preview.modelsLoading && (preview.running || sources.selectedCount > 0)
+                        enabled: !preview.stopping && !preview.modelsLoading && !preview.modelTesting && (preview.running || sources.selectedCount > 0)
                         onClicked: preview.running ? preview.stop() : preview.start(startDate.value, endDate.value, root.currentOptions())
                     }
                 }
@@ -284,34 +313,54 @@ ApplicationWindow {
                             objectName: "configScroll"
                             Layout.fillHeight: true; Layout.fillWidth: true
                             contentWidth: availableWidth
+                            contentHeight: configContent.implicitHeight + 40
                             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                             ScrollBar.vertical.policy: ScrollBar.AsNeeded
                             clip: true
                             ColumnLayout {
-                                width: configScroll.availableWidth - 60
-                                x: 30; y: 18
-                                spacing: 8
-                                enabled: !preview.running
+                                id: configContent; objectName: "configContent"
+                                width: configScroll.availableWidth - (root.workspaceV3 ? 44 : 40)
+                                height: implicitHeight
+                                x: root.workspaceV3 ? 22 : 20; y: 20
+                                spacing: 12
+                                enabled: !preview.running && !preview.modelTesting
                                 opacity: enabled ? 1 : 0.65
                                 SectionTitle {
-                                    title: "统计周期"; marker: "01"
+                                    objectName: "dateSection"
+                                    title: root.workspaceV3 ? "任务范围" : "统计周期"; marker: "01"
                                     DatePreset { objectName: "recent7Days"; days: 7 }
                                     DatePreset { objectName: "recent30Days"; days: 30 }
                                 }
                                 RowLayout {
-                                    Layout.fillWidth: true; spacing: 12
-                                    DateField { onValueChanged: root.queueSave(); id: startDate; objectName: "startDate"; Layout.fillWidth: true; glassTexture: backdropTexture; glassScene: root.contentItem; reducedTransparency: root.reducedTransparency }
-                                    Text { text: "至"; color: "#7b7f7b"; font.pixelSize: 12 }
-                                    DateField { onValueChanged: root.queueSave(); id: endDate; objectName: "endDate"; Layout.fillWidth: true; glassTexture: backdropTexture; glassScene: root.contentItem; reducedTransparency: root.reducedTransparency }
+                                    visible: root.workspaceV3; Layout.fillWidth: true; spacing: 12
+                                    SmallLabel { text: "开始日期"; Layout.fillWidth: true; font.pixelSize: 11 }
+                                    Item { Layout.preferredWidth: 14 }
+                                    SmallLabel { text: "结束日期"; Layout.fillWidth: true; font.pixelSize: 11 }
                                 }
-                                Separator { Layout.topMargin: 8; Layout.bottomMargin: 7 }
+                                RowLayout {
+                                    objectName: "dateFields"
+                                    Layout.fillWidth: true; spacing: 12
+                                    DateField { onValueChanged: root.queueSave(); id: startDate; objectName: "startDate"; Layout.fillWidth: true; Layout.minimumWidth: 170; glassTexture: backdropTexture; glassScene: root.contentItem; reducedTransparency: root.workspaceV3 || root.reducedTransparency }
+                                    Text { text: "至"; color: "#7b7f7b"; font.pixelSize: 12 }
+                                    DateField { onValueChanged: root.queueSave(); id: endDate; objectName: "endDate"; Layout.fillWidth: true; Layout.minimumWidth: 170; glassTexture: backdropTexture; glassScene: root.contentItem; reducedTransparency: root.workspaceV3 || root.reducedTransparency }
+                                }
+                                SmallLabel { visible: root.workspaceV3; text: "采集站点"; font.pixelSize: 11; Layout.topMargin: 4 }
+                                Loader {
+                                    active: root.workspaceV3; visible: active; Layout.fillWidth: true
+                                    sourceComponent: SourcePicker {
+                                        objectName: "sitePicker"; glassTexture: backdropTexture; glassScene: root.contentItem
+                                        reducedTransparency: root.workspaceV3 || root.reducedTransparency
+                                    }
+                                }
+                                Separator { Layout.topMargin: 4; Layout.bottomMargin: 4 }
                                 SectionTitle {
+                                    objectName: "modelSection"
                                     title: "大模型配置"; marker: "02"
                                     SmallLabel { text: llmEnabled.checked ? "已启用" : "已关闭"; color: "#6b6e6b"; font.pixelSize: 11 }
                                     Toggle { id: llmEnabled; checked: true; onCheckedChanged: root.queueSave(); Accessible.name: "启用大模型" }
                                 }
                                 GridLayout {
-                                    Layout.fillWidth: true; columns: 2; columnSpacing: 14; rowSpacing: 7
+                                    Layout.fillWidth: true; columns: 2; columnSpacing: 16; rowSpacing: 8
                                     uniformCellWidths: true
                                     enabled: llmEnabled.checked && !preview.modelsLoading
                                     SmallLabel { text: "接口地址" }
@@ -358,7 +407,7 @@ ApplicationWindow {
                                         popup: Popup {
                                             y: modelBox.height + 5; width: modelBox.width; padding: 4
                                             implicitHeight: Math.min(modelList.contentHeight, 280) + 8
-                                            background: GlassSurface { texture: backdropTexture; scene: root.contentItem; radius: 10; frost: 8; whiteMix: 0.97; reducedTransparency: root.reducedTransparency }
+                                            background: GlassSurface { texture: backdropTexture; scene: root.contentItem; radius: 10; frost: 8; whiteMix: 0.97; reducedTransparency: root.workspaceV3 || root.reducedTransparency }
                                             contentItem: ListView {
                                                 id: modelList; objectName: "modelList"
                                                 clip: true; implicitHeight: contentHeight
@@ -373,63 +422,95 @@ ApplicationWindow {
                                         onClicked: { preview.saveConfig(root.currentOptions()); preview.fetchModels(apiUrl.text, apiKey.text, verifySsl.checked) }
                                     }
                                 }
-                                Separator { Layout.topMargin: 8; Layout.bottomMargin: 7 }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    AppButton {
+                                        objectName: "testModel"; text: preview.modelTesting ? "测试中…" : "测试实际调用"
+                                        iconName: "activity"
+                                        enabled: !preview.isDemo && llmEnabled.checked && !preview.modelsLoading && !preview.modelTesting && modelBox.currentIndex >= 0
+                                        onClicked: modelTestDialog.open()
+                                    }
+                                    Text {
+                                        text: preview.modelTestResult; Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.preferredWidth: 0; wrapMode: Text.WrapAnywhere
+                                        font.pixelSize: 11; color: "#4c6258"; maximumLineCount: 3; elide: Text.ElideRight
+                                        ToolTip.visible: testResultHover.hovered && text.length > 0
+                                        ToolTip.text: text
+                                        HoverHandler { id: testResultHover }
+                                    }
+                                }
+                                Separator { Layout.topMargin: 4; Layout.bottomMargin: 4 }
                                 SectionTitle {
+                                    objectName: "runtimeSection"
                                     title: "运行设置"; marker: "03"
                                     SmallLabel { text: "请求间隔"; font.pixelSize: 11 }
                                     Rectangle {
                                         id: interval; objectName: "requestInterval"
                                         property int value: 5
                                         onValueChanged: root.queueSave()
-                                        Layout.preferredWidth: 98; Layout.preferredHeight: 28
+                                        Layout.preferredWidth: 112; Layout.preferredHeight: 32
                                         radius: 4; color: "#ebf2eb"; border.width: 1; border.color: "#e5ece5"
                                         activeFocusOnTab: true
                                         Accessible.role: Accessible.SpinBox
                                         Accessible.name: "请求间隔 " + (value / 10).toFixed(1) + " 秒"
                                         Keys.onUpPressed: value = Math.min(600, value + 1)
                                         Keys.onDownPressed: value = Math.max(0, value - 1)
-                                        AppButton { x: 1; y: 1; width: 25; height: 26; compact: true; tone: "ghost"; iconName: "minus"; hint: "减少请求间隔"; onClicked: interval.value = Math.max(0, interval.value - 1) }
+                                        AppButton { x: 1; y: 1; width: 28; height: 30; compact: true; tone: "ghost"; iconName: "minus"; hint: "减少请求间隔"; onClicked: interval.value = Math.max(0, interval.value - 1) }
                                         Text { anchors.centerIn: parent; text: (interval.value / 10).toFixed(1) + " s"; color: "#464846"; font.pixelSize: 11 }
-                                        AppButton { anchors.right: parent.right; anchors.rightMargin: 1; y: 1; width: 25; height: 26; compact: true; tone: "ghost"; iconName: "plus"; hint: "增加请求间隔"; onClicked: interval.value = Math.min(600, interval.value + 1) }
+                                        AppButton { anchors.right: parent.right; anchors.rightMargin: 1; y: 1; width: 28; height: 30; compact: true; tone: "ghost"; iconName: "plus"; hint: "增加请求间隔"; onClicked: interval.value = Math.min(600, interval.value + 1) }
                                     }
                                 }
                                 GridLayout {
-                                    Layout.fillWidth: true; columns: 2; columnSpacing: 28; rowSpacing: 4
+                                    objectName: "runtimeOptions"
+                                    Layout.fillWidth: true; columns: 2; columnSpacing: 28; rowSpacing: 8
+                                    uniformCellWidths: true
                                     SettingPair { id: attachments; objectName: "attachments"; label: "下载附件"; checked: false; onCheckedChanged: root.queueSave() }
                                     SettingPair { id: verifySsl; objectName: "verifySsl"; label: "校验 SSL"; checked: true; onCheckedChanged: root.queueSave() }
                                     SettingPair { id: browserFallback; objectName: "browserFallback"; label: "浏览器兜底"; checked: true; onCheckedChanged: root.queueSave() }
                                     SettingPair { id: strictMode; objectName: "strictMode"; label: "严格筛选"; checked: true; onCheckedChanged: root.queueSave() }
                                 }
                                 CheckControl { id: ruleFallback; objectName: "ruleFallback"; text: "模型不可用时使用规则兜底"; checked: false; onCheckedChanged: root.queueSave() }
-                                Separator { Layout.topMargin: 6; Layout.bottomMargin: 7 }
+                                Separator { visible: !root.workspaceV3; Layout.topMargin: 6; Layout.bottomMargin: 7 }
                                 SectionTitle {
+                                    visible: !root.workspaceV3
                                     title: "采集站点"; marker: "04"
                                     Text { text: "不限栏目 · 不限详情"; color: "#747774"; font.pixelSize: 11 }
                                 }
-                                SourcePicker { id: sitePicker; objectName: "sitePicker"; Layout.fillWidth: true; glassTexture: backdropTexture; glassScene: root.contentItem; reducedTransparency: root.reducedTransparency }
+                                Loader {
+                                    active: !root.workspaceV3; visible: active; Layout.fillWidth: true
+                                    sourceComponent: SourcePicker {
+                                        objectName: "sitePicker"; glassTexture: backdropTexture; glassScene: root.contentItem
+                                        reducedTransparency: root.reducedTransparency
+                                    }
+                                }
                                 RowLayout {
+                                    Layout.topMargin: root.workspaceV3 ? 6 : 0
                                     Layout.fillWidth: true; spacing: 7
                                     Icon { name: "folder-open"; width: 14; height: 14; tint: "#7a7d7a" }
                                     Text { text: preview.outputPath; font.pixelSize: 11; color: "#6e726e"; elide: Text.ElideMiddle; Layout.fillWidth: true }
-                                    AppButton { text: "更改"; tone: "ghost"; compact: true; hint: "选择输出目录"; onClicked: preview.chooseOutput() }
+                                    AppButton { text: root.workspaceV3 ? "输出目录" : "更改"; iconName: root.workspaceV3 ? "folder-open" : ""; tone: "ghost"; compact: true; hint: "选择输出目录"; onClicked: preview.chooseOutput() }
                                 }
                                 Item { Layout.preferredHeight: 22 }
                             }
                         }
                         Rectangle { Layout.fillHeight: true; width: 1; color: "#e8efe8" }
                         Rectangle {
-                            Layout.preferredWidth: root.width < 1130 ? 264 : 302
+                            objectName: "taskInspector"
+                            Layout.preferredWidth: root.workspaceV3 ? (root.width < 1180 ? 244 : 288) : root.width < 1130 ? 264 : 302
+                            Layout.minimumWidth: Layout.preferredWidth
+                            Layout.maximumWidth: Layout.preferredWidth
                             Layout.fillHeight: true
-                            color: "#f0f4ef"
+                            color: root.workspaceV3 ? "#f7f9fb" : "#f0f4ef"
                             ScrollView {
                                 id: monitorScroll
+                                objectName: "monitorScroll"
                                 anchors.fill: parent
                                 contentWidth: availableWidth
                                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                                 clip: true
                                 ColumnLayout {
-                                    width: monitorScroll.availableWidth - 44
-                                    x: 22; y: 26; spacing: 18
+                                    objectName: "monitorColumn"
+                                    width: monitorScroll.availableWidth - 36
+                                    x: 18; y: 16; spacing: 12
                                     RowLayout {
                                         Layout.fillWidth: true
                                         Icon { name: "activity"; width: 16; height: 16; tint: "#267451" }
@@ -440,8 +521,12 @@ ApplicationWindow {
                                     }
                                     ColumnLayout {
                                         spacing: 7; Layout.fillWidth: true
-                                        Text { text: preview.state; color: "#262726"; font.pixelSize: 22; font.weight: Font.Medium; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                                        Text { text: preview.state; color: "#262726"; font.pixelSize: 19; font.weight: Font.Medium; Layout.fillWidth: true; wrapMode: Text.Wrap }
                                         Text { text: preview.isDemo ? "离线演示 / 无网络请求" : "真实任务 / 本地报告"; font.pixelSize: 11; color: "#6f736f" }
+                                    }
+                                    AppButton {
+                                        objectName: "taskCoverage"; text: "任务详情与恢复"; iconName: "activity"
+                                        enabled: preview.hasTask; onClicked: coverageDialog.open()
                                     }
                                     Separator {}
                                     GridLayout {
@@ -449,11 +534,11 @@ ApplicationWindow {
                                         SmallLabel { text: "已处理站点" }
                                         SmallLabel { text: "耗时" }
                                         Row {
-                                            spacing: 4
-                                            Text { text: preview.done; font.pixelSize: 27; color: "#292a29" }
+                                                spacing: 4
+                                            Text { text: preview.done; font.pixelSize: root.workspaceV3 ? 23 : 27; color: "#292a29" }
                                             Text { text: "/ " + (preview.running || preview.done > 0 ? preview.total : sources.selectedCount); font.pixelSize: 12; color: "#6f726f"; anchors.bottom: parent.bottom; anchors.bottomMargin: 4 }
                                         }
-                                        Text { text: preview.elapsed; font.pixelSize: 24; color: "#313331" }
+                                        Text { text: preview.elapsed; font.pixelSize: root.workspaceV3 ? 21 : 24; color: "#313331" }
                                         SmallLabel { text: preview.isDemo ? "处理页面（演示）" : "处理页面"; font.pixelSize: 11; Layout.topMargin: 10 }
                                         SmallLabel { text: preview.isDemo ? "收录信息（演示）" : "收录信息"; font.pixelSize: 11; Layout.topMargin: 10 }
                                         Text { text: preview.pages; font.pixelSize: 23; color: "#3c3e3c" }
@@ -469,7 +554,11 @@ ApplicationWindow {
                                     }
                                     Text {
                                         text: preview.stageSummary; color: "#646764"; font.pixelSize: 11
-                                        Layout.fillWidth: true; wrapMode: Text.Wrap
+                                        Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.preferredWidth: 0; wrapMode: Text.WrapAnywhere
+                                    }
+                                    Text {
+                                        text: preview.coverageText; color: "#4b5a52"; font.pixelSize: root.workspaceV3 ? 11 : 12
+                                        Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.preferredWidth: 0; wrapMode: Text.WrapAnywhere
                                     }
                                     ColumnLayout {
                                         spacing: 9; Layout.fillWidth: true
@@ -485,7 +574,7 @@ ApplicationWindow {
                                     }
                                     Separator { Layout.topMargin: 2 }
                                     ColumnLayout {
-                                        Layout.fillWidth: true; spacing: 14
+                                        Layout.fillWidth: true; spacing: root.workspaceV3 ? 8 : 14
                                         Repeater {
                                             model: ["栏目与列表", "详情提取", "分类与汇总", "PDF 报告"]
                                             RowLayout {
@@ -508,13 +597,13 @@ ApplicationWindow {
                     Separator {}
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: logToggle.checked ? (root.height < 810 ? 135 : 150) : 42
-                        color: "#eaf0ea"
+                        Layout.preferredHeight: logToggle.checked ? Math.max(165, Math.min(225, root.height * 0.24)) : 38
+                        color: "#fafcfd"
                         Behavior on Layout.preferredHeight { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                         ColumnLayout {
                             anchors.fill: parent; spacing: 0
                             RowLayout {
-                                Layout.fillWidth: true; Layout.preferredHeight: 42; Layout.leftMargin: 26; Layout.rightMargin: 22
+                                Layout.fillWidth: true; Layout.preferredHeight: 38; Layout.leftMargin: 20; Layout.rightMargin: 18
                                 Icon { name: "terminal"; width: 15; height: 15; tint: "#636663" }
                                 Text { text: "运行日志"; color: "#454745"; font.pixelSize: 12 }
                                 Rectangle {
@@ -522,6 +611,11 @@ ApplicationWindow {
                                     Text { anchors.centerIn: parent; text: preview.isDemo ? "DEMO" : "LIVE"; font.pixelSize: 8; color: "#616461" }
                                 }
                                 Item { Layout.fillWidth: true }
+                                CheckControl {
+                                    visible: root.workspaceV3 && logToggle.checked
+                                    text: "跟随最新"; checked: logs.followTail
+                                    onClicked: { logs.followTail = !logs.followTail; if (logs.followTail) logs.positionViewAtEnd() }
+                                }
                                 Field {
                                     id: logSearch; objectName: "logSearch"
                                     visible: logToggle.checked
@@ -531,12 +625,19 @@ ApplicationWindow {
                                 AppButton { iconName: "x"; compact: true; tone: "ghost"; hint: "清空日志"; onClicked: preview.clearLogs() }
                                 AppButton { id: logToggle; iconName: "chevron-down"; compact: true; tone: "ghost"; hint: checked ? "收起日志" : "展开日志"; checkable: true; checked: true; rotation: checked ? 0 : 180 }
                             }
+                            Rectangle {
+                                Layout.fillWidth: true; Layout.preferredHeight: 23
+                                visible: logToggle.checked; color: "#f0f4f6"
+                                Text { x: 20; anchors.verticalCenter: parent.verticalCenter; text: "时间"; font.pixelSize: 10; color: "#75818b" }
+                                Text { x: 102; anchors.verticalCenter: parent.verticalCenter; text: "级别"; font.pixelSize: 10; color: "#75818b" }
+                                Text { x: 170; anchors.verticalCenter: parent.verticalCenter; text: "消息"; font.pixelSize: 10; color: "#75818b" }
+                            }
                             ListView {
                                 id: logs; objectName: "logList"
                                 property bool followTail: true
-                                Layout.fillWidth: true; Layout.fillHeight: true; Layout.leftMargin: 28; Layout.rightMargin: 18; Layout.bottomMargin: 12
+                                Layout.fillWidth: true; Layout.fillHeight: true; Layout.leftMargin: 20; Layout.rightMargin: 18; Layout.bottomMargin: 6
                                 visible: logToggle.checked
-                                clip: true; model: logModel; spacing: 2
+                                clip: true; model: logModel; spacing: 0
                                 boundsBehavior: Flickable.StopAtBounds
                                 ScrollBar.vertical: ScrollBar {
                                     id: logScrollbar
@@ -552,19 +653,8 @@ ApplicationWindow {
                                         else Qt.callLater(function() { if (logs.atYEnd) logs.followTail = true })
                                     }
                                 }
-                                delegate: Item {
-                                    required property string logTime
-                                    required property string level
-                                    required property string message
+                                delegate: LogRow {
                                     width: logs.width - 12
-                                    height: Math.max(21, logMessage.implicitHeight + 4)
-                                    RowLayout {
-                                        anchors { left: parent.left; right: parent.right; top: parent.top }
-                                        spacing: 14
-                                        Text { text: logTime; font.family: "Menlo"; font.pixelSize: 10; color: "#7e827e"; Layout.alignment: Qt.AlignTop; Layout.topMargin: 3 }
-                                        Text { text: level; font.pixelSize: 9; color: level === "READY" || level === "DONE" ? "#545754" : level === "STOP" ? "#9c6d2a" : "#6a6d6a"; Layout.preferredWidth: 36; Layout.alignment: Qt.AlignTop; Layout.topMargin: 4 }
-                                        Text { id: logMessage; text: message; font.pixelSize: 11; color: "#585b58"; Layout.fillWidth: true; wrapMode: Text.Wrap; lineHeight: 1.35 }
-                                    }
                                 }
                                 AppButton {
                                     anchors.right: parent.right; anchors.rightMargin: 14; anchors.bottom: parent.bottom
@@ -602,11 +692,12 @@ ApplicationWindow {
                     }
                     Separator {}
                     RowLayout {
-                        Layout.fillWidth: true; Layout.leftMargin: 42; Layout.rightMargin: 44; spacing: 16
+                        Layout.fillWidth: true; Layout.leftMargin: 44; Layout.rightMargin: 8; spacing: 12
                         SmallLabel { text: "站点名称"; Layout.fillWidth: true }
-                        SmallLabel { text: "地区"; Layout.preferredWidth: 60 }
-                        SmallLabel { text: "配置栏目"; Layout.preferredWidth: 70 }
-                        SmallLabel { text: "配置状态"; Layout.preferredWidth: 70 }
+                        SmallLabel { text: "地区"; Layout.preferredWidth: 42 }
+                        SmallLabel { text: "栏目数"; Layout.preferredWidth: 54 }
+                        SmallLabel { text: "配置状态"; Layout.preferredWidth: 92 }
+                        SmallLabel { text: "操作"; Layout.preferredWidth: 32 }
                     }
                     ListView {
                         id: manageList; objectName: "manageList"
@@ -616,21 +707,24 @@ ApplicationWindow {
                         delegate: Item {
                             required property int siteId; required property string siteName; required property string region
                             required property int channels; required property bool selected; required property string siteUrl
-                            width: manageList.width; height: 58
+                            width: manageList.width - 8; height: 64
                             Rectangle { anchors.fill: parent; color: manageHover.hovered ? "#ebf2eb" : "transparent"; radius: 5 }
                             HoverHandler { id: manageHover }
                             RowLayout {
-                                anchors.fill: parent; spacing: 16
+                                anchors.fill: parent; spacing: 12
                                 CheckControl { Layout.preferredWidth: 24; Layout.leftMargin: 8; checked: selected; enabled: !preview.running; onClicked: sources.toggle(siteId) }
                                 ColumnLayout {
                                     Layout.fillWidth: true; spacing: 4
                                     Text { text: siteName; color: "#333533"; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
                                     Text { text: siteUrl; color: "#7a7e7a"; font.pixelSize: 10; Layout.fillWidth: true; elide: Text.ElideRight }
                                 }
-                                SmallLabel { text: region; Layout.preferredWidth: 60 }
-                                SmallLabel { text: channels; Layout.preferredWidth: 70 }
-                                RowLayout { Layout.preferredWidth: 70; spacing: 6; Rectangle { width: 4; height: 4; radius: 2; color: "#43805c" } SmallLabel { text: "已配置"; color: "#43805c" } }
-                                AppButton { iconName: "arrow-up-right"; tone: "ghost"; compact: true; hint: "在浏览器打开网站"; onClicked: preview.openSite(siteUrl) }
+                                SmallLabel { text: region; Layout.preferredWidth: 42 }
+                                SmallLabel { text: channels; Layout.preferredWidth: 54 }
+                                SmallLabel { text: "配置已载入"; color: "#7b8792"; Layout.preferredWidth: 92 }
+                                RowLayout {
+                                    Layout.preferredWidth: 32
+                                    AppButton { iconName: "arrow-up-right"; tone: "ghost"; compact: true; hint: "在浏览器打开网站"; onClicked: preview.openSite(siteUrl) }
+                                }
                             }
                             Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#e9f0e9" }
                         }
@@ -736,6 +830,87 @@ ApplicationWindow {
                 Text { text: "PDF"; color: "#6b6e6b"; font.pixelSize: 10 }
                 Text { text: "·"; color: "#818581"; font.pixelSize: 11 }
                 Text { text: "本地输出"; color: "#7b7f7b"; font.pixelSize: 10 }
+            }
+        }
+    }
+
+    Dialog {
+        id: modelTestDialog; objectName: "modelTestDialog"
+        anchors.centerIn: parent; width: 440; modal: true
+        title: "测试实际模型调用"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        contentItem: Text {
+            text: "将向当前服务发送一段内置虚构样例，不上传采集文章。测试会产生少量 API 用量；接口适配可能发送多次请求，最长等待 180 秒。"
+            color: "#344b3b"; wrapMode: Text.Wrap; font.pixelSize: 13
+        }
+        onAccepted: preview.testModel(root.currentOptions())
+    }
+
+    Dialog {
+        id: coverageDialog; objectName: "coverageDialog"
+        anchors.centerIn: parent; width: Math.min(root.width - 80, 850); height: Math.min(root.height - 80, 620)
+        modal: true; title: "最近任务 · 采集覆盖与恢复"
+        footer: Item {
+            implicitHeight: 52
+            AppButton { text: "关闭"; iconName: "x"; anchors.right: parent.right; anchors.rightMargin: 16; anchors.verticalCenter: parent.verticalCenter; onClicked: coverageDialog.close() }
+        }
+        property string expandedSource: ""
+        contentItem: ColumnLayout {
+            spacing: 12
+            Text { text: preview.coverageText; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#344b3b" }
+            RowLayout {
+                AppButton {
+                    objectName: "resumeTask"; text: "继续／补采失败项"; iconName: "refresh-cw"
+                    enabled: !preview.running && !preview.modelTesting && !preview.modelsLoading && preview.hasTask
+                    onClicked: { preview.resumeTask("resume", root.currentOptions()); coverageDialog.close() }
+                }
+                AppButton {
+                    objectName: "retryModelFailures"; text: "仅重试模型"; iconName: "sparkles"
+                    enabled: !preview.running && !preview.modelTesting && !preview.modelsLoading && preview.hasTask
+                    onClicked: { preview.resumeTask("llm", root.currentOptions()); coverageDialog.close() }
+                }
+            }
+            ListView {
+                objectName: "coverageList"; Layout.fillWidth: true; Layout.fillHeight: true; clip: true
+                model: preview.coverageSources; spacing: 1
+                ScrollBar.vertical: ScrollBar {}
+                delegate: Column {
+                    required property var modelData
+                    width: ListView.view.width; spacing: 6
+                    ItemDelegate {
+                        id: coverageSourceRow
+                        width: parent.width; height: 44
+                        text: modelData.name + " · " + modelData.label + " · " + modelData.pages + " 页 / " + modelData.failed_pages + " 页待核查"
+                        onClicked: coverageDialog.expandedSource = coverageDialog.expandedSource === modelData.name ? "" : modelData.name
+                        contentItem: RowLayout {
+                            Text { text: coverageSourceRow.text; Layout.fillWidth: true; font.pixelSize: 12; color: "#344b3b"; wrapMode: Text.Wrap }
+                            Icon { name: "chevron-right"; width: 16; height: 16; rotation: coverageDialog.expandedSource === modelData.name ? 90 : 0; tint: "#59685f" }
+                        }
+                    }
+                    Text {
+                        width: parent.width - 20; x: 10
+                        visible: coverageDialog.expandedSource === modelData.name
+                        text: "收录 " + modelData.counts.included + " · 排除 " + modelData.counts.excluded + " · 日期范围外 " + modelData.counts.out_of_range + " · 待复判 " + modelData.counts.llm_failed + " · 详情失败 " + modelData.counts.detail_failed
+                        color: "#59685f"; font.pixelSize: 12; wrapMode: Text.Wrap
+                    }
+                    Repeater {
+                        model: coverageDialog.expandedSource === modelData.name ? modelData.details : []
+                        delegate: Text {
+                            required property var modelData
+                            width: parent.width - 20; x: 10; font.pixelSize: 11; color: "#59685f"; wrapMode: Text.WrapAnywhere
+                            text: (modelData.column || "列表页") + " · " + ({complete:"已检查",failed:"失败",empty:"未提取到链接",pending:"未完成"}[modelData.status] || modelData.status) + "\n" + modelData.url + (modelData.stop ? "\n" + modelData.stop : "") + (modelData.reason ? "\n" + modelData.reason : "")
+                        }
+                    }
+                    Repeater {
+                        model: coverageDialog.expandedSource === modelData.name ? modelData.issues : []
+                        delegate: Text {
+                            required property var modelData
+                            width: parent.width - 20; x: 10; font.pixelSize: 11; color: "#96612e"; wrapMode: Text.WrapAnywhere
+                            text: (modelData.title || "待处理文章") + " · " + ({llm_failed:"待复判",detail_failed:"详情失败",pending:"未完成"}[modelData.status] || modelData.status) + "\n" + modelData.url + "\n" + modelData.reason
+                        }
+                    }
+                    Rectangle { width: parent.width; height: 1; color: "#dce4df" }
+                }
             }
         }
     }

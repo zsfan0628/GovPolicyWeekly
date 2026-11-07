@@ -3,12 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import uuid
 from pathlib import Path
 
 from gov_report.config import load_keywords, load_sources
 from gov_report.crawler import GovCrawler, read_manual_urls, dedupe_records
 from gov_report.date_utils import resolve_date_range
 from gov_report.report import export_all
+from gov_report.task_state import TaskState, task_lock
 
 
 def parse_args() -> argparse.Namespace:
@@ -39,12 +41,25 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-browser-fallback", action="store_true", help="关闭 Playwright 浏览器兜底读取。")
     p.add_argument("--allow-rule-fallback", action="store_true", help="当GPT未启用时，允许模糊候选按规则兜底通过。默认关闭，避免半信半疑内容进入报告。")
     p.add_argument("--progress-json", action="store_true", help="输出供桌面界面读取的结构化进度事件")
+    p.add_argument("--task-state", type=Path, help="新任务的断点文件位置")
+    p.add_argument("--resume-task", type=Path, help="恢复已有任务的断点文件")
+    p.add_argument("--retry-mode", choices=("resume", "failed", "llm"), default="resume")
+    p.add_argument("--test-model", action="store_true", help="用虚构样例测试真实模型调用，可能产生少量费用")
     return p.parse_args()
 
 
 def main() -> None:
-    run_start_ts = time.perf_counter()
     args = parse_args()
+    if args.test_model:
+        from gov_report.model_probe import run_probe
+        print("@@GOV_MODEL_TEST " + json.dumps(run_probe(), ensure_ascii=False), flush=True)
+        return
+    with task_lock(args.resume_task or args.task_state):
+        run_collection(args)
+
+
+def run_collection(args) -> None:
+    run_start_ts = time.perf_counter()
     def progress(payload):
         if args.progress_json:
             print("@@GOV_PROGRESS " + json.dumps(payload, ensure_ascii=False), flush=True)
@@ -54,11 +69,32 @@ def main() -> None:
         end_date=args.end_date,
         include_today=args.include_today,
     )
-    out_dir = Path(args.output_root) / f"{start:%Y-%m-%d}_至_{end:%Y-%m-%d}"
-    out_dir.mkdir(parents=True, exist_ok=True)
-
     sources = load_sources(args.sources)
     keywords = load_keywords(args.keywords)
+    selected = [s for s in sources if not args.source or s["name"] == args.source]
+    if args.source and not selected:
+        raise ValueError("未找到指定站点")
+    if args.resume_task and not args.resume_task.is_file():
+        raise ValueError("任务断点文件不存在")
+    if args.resume_task and args.task_state:
+        raise ValueError("新建和恢复任务不能同时选择")
+    if args.retry_mode != "resume" and not args.resume_task:
+        raise ValueError("重试需要选择已有任务")
+    state_path = args.resume_task or args.task_state
+    prior = TaskState(state_path).get("meta", "", "task") if args.resume_task else None
+    if args.resume_task and not prior:
+        raise ValueError("任务文件缺少元数据，不能恢复")
+    manual_urls = read_manual_urls(args.manual_urls)
+    out_dir = Path(prior["output_dir"]) if prior else Path(args.output_root) / f"{start:%Y-%m-%d}_至_{end:%Y-%m-%d}" / ("task-" + uuid.uuid4().hex[:12])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    state_path = state_path or out_dir / "task.sqlite3"
+    metadata = dict(version=1, start_date=args.start_date or f"{start:%Y-%m-%d}", end_date=args.end_date or f"{end:%Y-%m-%d}",
+                    sources=selected, keywords=keywords, strict=not args.loose, full_scan=args.full_scan,
+                    allow_rule_fallback=args.allow_rule_fallback, use_llm=not args.no_llm,
+                    max_channels=args.max_channels_per_source, max_detail=args.max_detail_per_source,
+                    manual_urls=manual_urls, output_dir=str(out_dir.absolute()))
+    task = TaskState(state_path, metadata)
+    progress({"event": "task_ready", "path": str(state_path.absolute()), "summary": task.summary()})
 
     print(f"统计周期：{start:%Y-%m-%d %H:%M:%S} 至 {end:%Y-%m-%d %H:%M:%S}")
     print(f"输出目录：{out_dir}")
@@ -79,16 +115,23 @@ def main() -> None:
         progress_callback=progress if args.progress_json else None,
         max_workers=args.workers,
         full_scan=args.full_scan,
-        cache_dir=args.cache_dir,
+        cache_dir=args.cache_dir or Path(args.output_root) / ".cache",
         use_cache=not args.no_cache,
+        task_state=task,
     )
 
-    records = crawler.crawl(start, end, source_name=args.source)
-    manual_urls = read_manual_urls(args.manual_urls)
-    if manual_urls:
+    if args.retry_mode == "llm":
+        records = crawler.retry_model_failures(start, end)
+    else:
+        records = crawler.crawl(start, end, source_name=args.source)
+    if manual_urls and args.retry_mode != "llm":
         progress({"event": "manual_started"})
         print(f"读取手工补充链接 {len(manual_urls)} 条")
         records.extend(crawler.crawl_manual_urls(manual_urls, start, end))
+    records = task.records()
+    coverage = task.summary()
+    (out_dir / "coverage_summary.json").write_text(json.dumps(coverage, ensure_ascii=False, indent=2), encoding="utf-8")
+    progress({"event": "coverage", "summary": coverage})
 
     # 再去重一次：同时按规范化URL、标题+日期+来源、正文hash去重。
     records = dedupe_records(records)
@@ -96,7 +139,8 @@ def main() -> None:
 
     progress({"event": "export_started", "record_count": len(records)})
     export_start = time.perf_counter()
-    paths = export_all(records, out_dir, start, end, keywords)
+    paths = export_all(records, out_dir, start, end, keywords,
+                       report_context={"coverage": coverage, "stages": crawler.metrics.snapshot()})
     export_seconds = time.perf_counter() - export_start
     progress({"event": "report_ready", "record_count": len(records), "paths": paths,
               "seconds": export_seconds})
@@ -117,6 +161,7 @@ def main() -> None:
         "full_scan": args.full_scan,
         "stages": crawler.metrics.snapshot(),
         "llm": crawler.llm_statistics(),
+        "coverage": coverage,
         "export_seconds": round(export_seconds, 3),
     }
     (out_dir / "runtime_summary.json").write_text(json.dumps(runtime_info, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -128,14 +173,14 @@ def main() -> None:
         if v:
             print(f"- {k}: {v}")
         elif k == "pdf":
-            print("- pdf: 未生成。请安装 LibreOffice 后重试，或直接打开 DOCX。")
+            print("- pdf: 未生成。请检查输出目录权限和软件字体文件，详见运行日志。")
     print(f"- log: {out_dir / 'crawl_log.txt'}")
     print(f"- runtime: {out_dir / 'runtime_summary.json'}")
     print(f"共命中 {len(records)} 条。")
     print(f"程序运行总时长：{elapsed_text}")
     print("大模型参数可在桌面界面中配置；命令行关闭复判可使用 --no-llm。")
     progress({"event": "completed", "record_count": len(records), "paths": paths,
-              "elapsed_seconds": elapsed})
+              "elapsed_seconds": elapsed, "coverage": coverage})
 
 
 def format_duration(seconds: float) -> str:

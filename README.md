@@ -6,11 +6,25 @@ A desktop tool for collecting Chinese government policy and personnel announceme
 
 ## Desktop Workspace
 
+Site management shows loaded configuration, not live connectivity status.
+
+An optional compact sidebar workspace is available with
+`python desktop_app.py --design-preview`. On macOS, `WorkspacePreview.command`
+opens it using the project environment. It uses the real backend and saved settings;
+it does not start a task automatically. The default layout remains unchanged.
+
 - Glass-style navigation, a bundled glacier background and an optional startup animation.
 - Calendar date selection, highlighted 7-day / 30-day presets, and searchable selection across 30 configured sites.
 - Real collection progress, filterable logs, stop controls and report history.
 - OpenAI-compatible model discovery and selection, with an optional rule-based fallback.
+- Real model-call probes, source coverage details, persisted task recovery and model-only retries.
+
+The latest local source adds [task coverage and recovery](docs/task-recovery.md).
+These changes are not automatically included in previously published Windows downloads.
 - Attachment downloads and PDF export without a mandatory LibreOffice installation. Word, Excel and JSON exports are also retained.
+- PDFs now use one compact template on every platform: embedded Source Han Sans CN,
+  grouped linked lists, shaded detail headings and summaries, internal navigation and
+  a collection/judgment appendix. See [PDF layout](docs/pdf-layout.md).
 - Locally saved preferences, masked API key input, reduced motion and reduced transparency.
 
 The main workspace runs the real collection engine. `ui_preview.py` remains a separate, explicitly offline design demo.

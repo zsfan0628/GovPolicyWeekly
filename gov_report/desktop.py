@@ -23,6 +23,7 @@ from PySide6.QtCore import QTimer, Slot
 from PySide6.QtWidgets import QFileDialog
 
 from ui_preview import APP_DIR, ROOT, Workspace
+from .task_state import TaskState
 
 
 PROGRESS_PREFIX = "@@GOV_PROGRESS "
@@ -154,6 +155,13 @@ class DesktopController(Workspace):
         self._errors = 0
         self._known_secrets = {self.config.get("openai_api_key", "")}
         self._pending_model = None
+        self._model_testing = False
+        self._model_test_result = ""
+        self._probe_process = None
+        self._task_path = self.config.get("last_task_path", "")
+        self._coverage = {}
+        self._resume_request = None
+        self._refresh_coverage()
         self.timer = QTimer(self)
         self.timer.setInterval(100)
         self.timer.timeout.connect(self._drain)
@@ -198,15 +206,19 @@ class DesktopController(Workspace):
             updated = self._options(options)
             self._known_secrets.add(updated.get("openai_api_key", ""))
             if updated != self.config or not self.store.path.exists():
+                model_changed = any(updated.get(k) != self.config.get(k) for k in ("openai_base_url", "openai_api_key", "openai_model"))
                 self.store.save(updated)
                 self.config = updated
+                if model_changed and self._model_test_result and not self._model_testing:
+                    self._model_test_result = "配置已改变，请重新测试"
+                    self.changed.emit()
         except (OSError, ValueError, TypeError) as error:
             self.add_log("ERROR", f"配置保存失败：{error}")
             self.toast.emit("配置未能保存，请检查用户目录的写入权限")
 
     @Slot(str, str, bool)
     def fetchModels(self, base_url, api_key, verify_ssl=True):
-        if self._models_loading or self._running:
+        if self._models_loading or self._running or self._model_testing:
             return
         try:
             normalize_api_url(base_url)
@@ -229,6 +241,93 @@ class DesktopController(Workspace):
             except Exception as error:
                 self.events.put(("model_error", request, str(error)))
         threading.Thread(target=work, daemon=True).start()
+
+    @Slot("QVariantMap")
+    def testModel(self, options):
+        if self._running or self._models_loading or self._model_testing:
+            return
+        try:
+            config = self._options(options)
+            config["openai_base_url"] = normalize_api_url(config["openai_base_url"])
+            if not config["openai_api_key"] or not config["openai_model"]:
+                raise ValueError("请填写 API Key 并选择模型")
+        except (ValueError, TypeError) as error:
+            self.toast.emit(str(error))
+            return
+        self.saveConfig(config)
+        fingerprint = tuple(config[k] for k in ("openai_base_url", "openai_api_key", "openai_model"))
+        self._model_testing = True
+        self._model_test_result = "正在测试真实生成接口…"
+        self.changed.emit()
+        def work():
+            try:
+                with tempfile.TemporaryDirectory(prefix="gov-model-probe-") as folder:
+                    log = Path(folder) / "probe.log"
+                    env = os.environ.copy()
+                    env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1",
+                               GOV_REPORT_OPENAI_BASE_URL=config["openai_base_url"],
+                               GOV_REPORT_OPENAI_API_KEY=config["openai_api_key"],
+                               GOV_REPORT_OPENAI_MODEL=config["openai_model"])
+                    env.pop("GOV_REPORT_WORKER_LOG", None)
+                    frozen = getattr(sys, "frozen", False)
+                    if frozen:
+                        env["GOV_REPORT_WORKER_LOG"] = str(log)
+                    command = [sys.executable] + (["--run-cli"] if frozen else ["-u", str(ROOT / "main.py")]) + ["--test-model"]
+                    process = subprocess.Popen(command, cwd=APP_DIR, env=env, stdout=subprocess.PIPE,
+                                               stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                                               creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                    self._probe_process = process
+                    if self._closed:
+                        process.kill()
+                    try:
+                        output, _ = process.communicate(timeout=180)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.communicate()
+                        raise ValueError("模型测试超过 180 秒，已停止，请检查网络或服务状态") from None
+                    if frozen and log.exists():
+                        output = log.read_text(encoding="utf-8", errors="replace")
+                    lines = [line[len("@@GOV_MODEL_TEST "):] for line in output.splitlines() if line.startswith("@@GOV_MODEL_TEST ")]
+                    if process.returncode != 0 or not lines:
+                        raise ValueError("测试进程未返回有效结果，请检查配置或重启软件")
+                    result = json.loads(lines[-1])
+                    self.events.put(("model_test", fingerprint, result))
+            except Exception as error:
+                message = str(error) if isinstance(error, ValueError) else f"测试进程异常：{type(error).__name__}"
+                self.events.put(("model_test", fingerprint, {"ok": False, "error": message}))
+            finally:
+                self._probe_process = None
+        threading.Thread(target=work, daemon=True).start()
+
+    def _refresh_coverage(self):
+        try:
+            if self._task_path and Path(self._task_path).is_file():
+                self._coverage = TaskState(self._task_path).summary()
+            else:
+                self._task_path = ""
+        except Exception:
+            self._task_path = ""
+
+    @Slot(str, "QVariantMap")
+    def resumeTask(self, mode, options):
+        if self._running or self._model_testing or self._models_loading or mode not in {"resume", "failed", "llm"}:
+            return
+        try:
+            if not self._task_path or not Path(self._task_path).is_file():
+                raise ValueError("没有可恢复的任务")
+            meta = TaskState(self._task_path).get("meta", "", "task")
+            if not meta:
+                raise ValueError("任务记录尚未建立，请重新开始")
+            config = dict(options)
+            config.update(strict_mode=meta["strict"], use_llm=meta["use_llm"], allow_rule_fallback=meta["allow_rule_fallback"])
+            if mode == "llm" and not config["use_llm"]:
+                raise ValueError("原任务未启用模型，没有待重试的模型判断")
+            self._resume_request = (self._task_path, mode, meta)
+            self.start(meta["start_date"], meta["end_date"], config)
+        except (OSError, ValueError, KeyError, TypeError):
+            self.toast.emit("无法恢复该任务，记录可能缺失或损坏，请新建任务")
+        finally:
+            self._resume_request = None
 
     @Slot()
     def chooseOutput(self):
@@ -265,7 +364,7 @@ class DesktopController(Workspace):
 
     @Slot(str, str, "QVariantMap")
     def start(self, start_date, end_date, options=None):
-        if self._running or self._models_loading:
+        if self._running or self._models_loading or self._model_testing:
             return
         try:
             start = dt.date.fromisoformat(start_date)
@@ -274,6 +373,9 @@ class DesktopController(Workspace):
                 raise ValueError("开始日期不能晚于结束日期")
             config = self._options(options or {})
             selected = [row for row in self.sources.rows if row["selected"]]
+            if self._resume_request:
+                names = {s["name"] for s in self._resume_request[2]["sources"]}
+                selected = [row for row in self.sources.rows if row["siteName"] in names]
             if not selected:
                 raise ValueError("请至少选择一个采集站点")
             if config["use_llm"]:
@@ -287,7 +389,8 @@ class DesktopController(Workspace):
             run_dir.mkdir(parents=True)
             names = {row["siteName"] for row in selected}
             source_path = run_dir / "sources.yaml"
-            source_path.write_text(yaml.safe_dump([row for row in self.sources.source_data if row["name"] in names],
+            source_data = self._resume_request[2]["sources"] if self._resume_request else [row for row in self.sources.source_data if row["name"] in names]
+            source_path.write_text(yaml.safe_dump(source_data,
                                                   allow_unicode=True, sort_keys=False), encoding="utf-8")
             out_root = Path(self._output)
             out_root.mkdir(parents=True, exist_ok=True)
@@ -299,6 +402,11 @@ class DesktopController(Workspace):
                         "--manual-urls", str(self.resource_dir / "input" / "manual_urls.txt"),
                         "--max-channels-per-source", "0", "--max-detail-per-source", "0",
                         "--sleep", str(config["sleep_seconds"]), "--progress-json"]
+            task_path = Path(self._resume_request[0]) if self._resume_request else run_dir / "task.sqlite3"
+            if self._resume_request:
+                command += ["--resume-task", str(task_path), "--retry-mode", self._resume_request[1]]
+            else:
+                command += ["--task-state", str(task_path)]
             if config["download_attachments"]:
                 command.append("--download-attachments")
             for key, flag in (("use_llm", "--no-llm"), ("download_attachments", "--no-download-attachments"),
@@ -329,6 +437,12 @@ class DesktopController(Workspace):
             self.toast.emit(str(error))
             return
         self.process = process
+        self._task_path = str(task_path)
+        self.config["last_task_path"] = self._task_path
+        self.saveConfig({})
+        self._coverage = {}
+        if task_path.is_file():
+            self._refresh_coverage()
         self._run_id = run_id
         self._active = selected
         self._running = True
@@ -375,7 +489,11 @@ class DesktopController(Workspace):
 
     def _progress(self, event):
         kind = event.get("event")
-        if kind == "source_started":
+        if kind in {"task_ready", "coverage"}:
+            self._coverage = event.get("summary", {})
+            if kind == "task_ready":
+                self._task_path = event.get("path", self._task_path)
+        elif kind == "source_started":
             self._current = str(event.get("source", ""))
             self._phase = "栏目与列表"
             self._active_sources[self._current] = self._phase
@@ -464,6 +582,20 @@ class DesktopController(Workspace):
                 self.reports.replace(value)
             elif kind == "report_error" and token == self._scan_request:
                 self.add_log("WARN", f"报告列表读取失败：{value}")
+            elif kind == "model_test":
+                self._model_testing = False
+                current = tuple(self.config.get(k, "") for k in ("openai_base_url", "openai_api_key", "openai_model"))
+                if current != token:
+                    self._model_test_result = "配置已改变，请重新测试"
+                elif value.get("ok"):
+                    self._model_test_result = f"调用通过 · {value.get('seconds', 0)} 秒 · {value.get('api_style', '')} / {value.get('response_mode', '')}"
+                else:
+                    self._model_test_result = "调用失败：" + value.get("error", "未返回有效判断")
+                for secret in self._known_secrets:
+                    if secret:
+                        self._model_test_result = self._model_test_result.replace(secret, "[已隐藏密钥]")
+                self.add_log("INFO" if value.get("ok") else "ERROR", self._model_test_result)
+                self.changed.emit()
         if self._running:
             seconds = time.monotonic() - self._started_at
             if int(seconds) != int(self._elapsed_seconds):
@@ -471,6 +603,7 @@ class DesktopController(Workspace):
                 self.changed.emit()
 
     def _finish(self, code):
+        self._refresh_coverage()
         was_stopping = self._stopping
         self._elapsed_seconds = time.monotonic() - self._started_at
         self._running = False
@@ -483,7 +616,8 @@ class DesktopController(Workspace):
             self._phase = "任务已停止"
             self.add_log("STOP", "任务已停止，未完成的报告不会标记为成功")
         elif code == 0 and pdf.is_file() and pdf.suffix.lower() == ".pdf":
-            self._state = "已完成（有警告）" if self._errors else "已完成"
+            incomplete = any(self._coverage.get(k, 0) for k in ("partial", "failed", "pending"))
+            self._state = "报告已生成（采集不完整）" if incomplete else "已完成（有警告）" if self._errors else "已完成"
             self._phase = "报告已生成"
             self._last_pdf = str(pdf.absolute())
             self.add_log("DONE", f"已生成 PDF：{self._last_pdf}")
@@ -535,6 +669,8 @@ class DesktopController(Workspace):
 
     def shutdown(self):
         self._closed = True
+        if self._probe_process and self._probe_process.poll() is None:
+            self._probe_process.kill()
         self.timer.stop()
         self._signal_process(True)
         if self.process and self.process.poll() is None:

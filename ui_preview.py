@@ -218,6 +218,34 @@ class Workspace(QObject):
         return getattr(self, "_models_loading", False)
 
     @Property(bool, notify=changed)
+    def modelTesting(self):
+        return getattr(self, "_model_testing", False)
+
+    @Property(str, notify=changed)
+    def modelTestResult(self):
+        return getattr(self, "_model_test_result", "")
+
+    @Property(bool, notify=changed)
+    def hasTask(self):
+        return bool(getattr(self, "_task_path", ""))
+
+    @Property("QVariantList", notify=changed)
+    def coverageSources(self):
+        return getattr(self, "_coverage", {}).get("sources", [])
+
+    @Property(str, notify=changed)
+    def coverageText(self):
+        data = getattr(self, "_coverage", {})
+        if not data:
+            return "尚无任务覆盖记录"
+        counts = data.get("counts", {})
+        return (f"{data.get('start_date', '')} 至 {data.get('end_date', '')}\n"
+                f"站点：{data.get('complete', 0)} 完成 · {data.get('partial', 0)} 部分失败 · "
+                f"{data.get('failed', 0)} 采集失败 · {data.get('pending', 0)} 未完成\n"
+                f"候选：{counts.get('included', 0)} 收录 · {counts.get('excluded', 0)} 排除 · "
+                f"{counts.get('llm_failed', 0)} 待复判 · {counts.get('detail_failed', 0)} 详情失败")
+
+    @Property(bool, notify=changed)
     def stopping(self):
         return getattr(self, "_stopping", False)
 
@@ -436,7 +464,7 @@ class Preview(Workspace):
         self.timer.stop()
 
 
-def launch_workspace(factory, smoke_check=None, artifacts=None):
+def launch_workspace(factory, smoke_check=None, artifacts=None, design_preview=False):
     QQuickStyle.setStyle("Basic")
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setApplicationName("GovPolicyWeekly")
@@ -454,6 +482,7 @@ def launch_workspace(factory, smoke_check=None, artifacts=None):
         engine.rootContext().setContextProperty(name, value)
     errors = []
     engine.warnings.connect(lambda warnings: errors.extend(warning.toString() for warning in warnings))
+    engine.setInitialProperties({"workspaceV3": design_preview})
     engine.load(QUrl.fromLocalFile(str(UI / "Main.qml")))
     if not engine.rootObjects():
         backend.shutdown()

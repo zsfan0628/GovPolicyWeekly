@@ -52,7 +52,7 @@ class PdfReportTests(unittest.TestCase):
                     self.assertIn('/FontFile2', f['/FontDescriptor'])
         for record in records:
             self.assertGreaterEqual(urls.count(record['url']), 3)
-        self.assertEqual(len(internal), 4)
+        self.assertEqual(len(internal), 6)
         self.assertEqual(repr(records), original)
         self.assertEqual([len(x[2]) for x in grouped_records(records)], [1, 1])
 
@@ -67,6 +67,38 @@ class PdfReportTests(unittest.TestCase):
         text = ''.join(p.extract_text() for p in r.pages)
         self.assertIn('2 条', text)
         self.assertIn('认证失败', text)
+
+    def test_overview_category_links_target_the_lists_not_the_details(self):
+        records = [self.record(title=f'政策清单测试条目{i}', url=f'https://example.gov.cn/policy/{i}')
+                   for i in range(70)]
+        records.append(self.record(title='任免清单测试条目', category='人事任免', url='https://example.gov.cn/personnel'))
+        reader = self.export(records)
+        links = [ref.get_object()['/Dest'] for ref in reader.pages[0].get('/Annots', [])
+                 if '/Dest' in ref.get_object()]
+        policy, personnel = links[:2]
+        def page_index(destination):
+            return next(i for i, page in enumerate(reader.pages) if page.indirect_reference == destination[0])
+        self.assertEqual(page_index(policy), 0)
+        self.assertGreater(page_index(personnel), 0)
+        self.assertEqual(policy[1], '/XYZ')
+        self.assertEqual(personnel[1], '/XYZ')
+        page = reader.pages[page_index(personnel)]
+        text = page.extract_text()
+        self.assertIn('B01', text)
+        self.assertIn('任免清单测试条目', text)
+        self.assertNotIn('人事任免 / 详细条目', text)
+        self.assertGreater(float(personnel[3]), 59)
+        detail_links = [ref.get_object()['/Dest'] for ref in page.get('/Annots', []) if '/Dest' in ref.get_object()]
+        self.assertTrue(any(page_index(dest) > page_index(personnel) for dest in detail_links))
+
+    def test_empty_categories_do_not_create_broken_navigation(self):
+        reader = self.export([])
+        self.assertFalse(any('/Dest' in ref.get_object() for ref in reader.pages[0].get('/Annots', [])))
+        for category in ('政策文件', '人事任免'):
+            reader = self.export([self.record(category=category)])
+            links = [ref.get_object()['/Dest'] for ref in reader.pages[0].get('/Annots', [])
+                     if '/Dest' in ref.get_object()]
+            self.assertEqual(len(links), 2)  # One overview link and one article number.
 
     def test_long_titles_summaries_and_attachments_split_without_losing_tail(self):
         r = self.export([self.record(title='很长的通知标题' * 180 + '标题结尾',

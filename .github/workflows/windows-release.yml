@@ -111,11 +111,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+          REBUILD_RELEASE: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[rebuild]') }}
         run: |
           set -euo pipefail
-          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            if [ "$REBUILD_RELEASE" != 'true' ]; then
+              echo 'Refusing to replace existing release without explicit [rebuild] marker.' >&2
+              exit 1
+            fi
+            previous=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')
+            ref_type=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.type')
+            test "$ref_type" = commit
+            if [ "$previous" != "$GITHUB_SHA" ]; then
+              comparison=$(gh api "repos/$GITHUB_REPOSITORY/compare/$previous...$GITHUB_SHA" --jq '.status')
+              test "$comparison" = ahead
+            fi
+          else
             gh release create "$RELEASE_TAG" --draft --target "$GITHUB_SHA" \
               --title "GovPolicyWeekly $RELEASE_TAG" --notes-file RELEASE_NOTES.md
           fi
           gh release upload "$RELEASE_TAG" release/* --clobber
-          gh release edit "$RELEASE_TAG" --draft=false --latest
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$RELEASE_TAG" \
+            -f sha="$GITHUB_SHA" -F force=false
+          gh release edit "$RELEASE_TAG" --notes-file RELEASE_NOTES.md --draft=false --latest

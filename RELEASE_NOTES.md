@@ -1,6 +1,10 @@
 # GovPolicyWeekly v1.4.0
 
+Rebuilt on 2026-11-15 / 2026-11-15 更新构建：版本号保持不变，请重新下载安装包或便携包；已下载的旧文件不会自动更新。
+
 ## English
+
+- PDF overview labels **Policy documents** and **Personnel appointments/removals** now jump directly to their respective index headings. Article-number links to details are unchanged; empty categories do not create broken links.
 
 Offline site maps, particle-map startup, balanced controls and transparent collection diagnostics.
 
@@ -35,6 +39,8 @@ Provide your own model API URL and API key. Model charges are set by your provid
 Publication is gated on regression tests, local-fixture desktop integration, source and packaged-executable self-tests, a silent installer run followed by installed-application self-tests, and portable ZIP integrity checks. This does not certify access to every live website on every network. The Windows downloads are not code-signed, so SmartScreen may show an unrecognized-publisher warning.
 
 ## 简体中文
+
+- PDF 首页“政策文件”“人事任免”可直接跳转至各自信息清单标题；编号跳转详情保持不变，空分类不生成无效链接。
 
 本版更新离线站点地图、颗粒启动动画、按钮排版和 PDF 访问异常明细。
 

@@ -10,6 +10,8 @@ arbitrary result counts and paginates dynamically rather than fixing six items t
   appears only in the personnel section. Dates sort descending within each section.
 - Index titles and detail titles link to the original HTTP(S) article. Index numbers
   link to details inside the report. Original-page and attachment links remain clickable.
+- The overview labels for policy and personnel jump to their respective index
+  headings, including the position within a page. Empty categories have no link.
 - Pale detail heading bands, grey summary blocks, accent bars and clear separators.
 - Short items stay together when possible. Long tables and bodies can span pages;
   index table headers repeat. Footer numbering includes the total number of pages.

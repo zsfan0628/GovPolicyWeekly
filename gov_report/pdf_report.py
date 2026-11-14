@@ -191,8 +191,12 @@ class Layout:
 
     def story(self):
         story = [self.p('政策与人事信息周报', 'title'), self.p('农药化工企业信息参考 · ' + self.period, 'small'), Spacer(1, 14)]
-        counts = [('收录总数', len(self.records)), ('政策文件', len(self.groups[0][2])), ('人事任免', len(self.groups[1][2]))]
-        stats = [[self.p(n, 'stat') for label, n in counts], [self.p(label, 'small') for label, n in counts]]
+        counts = [('收录总数', len(self.records), None),
+                  ('政策文件', len(self.groups[0][2]), 'list-A'),
+                  ('人事任免', len(self.groups[1][2]), 'list-B')]
+        stats = [[self.p(n, 'stat') for label, n, key in counts],
+                 [self.p(f'<a href="#{key}" color="{BLUE}"><u>{label}</u></a>', 'small', True)
+                  if key and n else self.p(label, 'small') for label, n, key in counts]]
         story += [Table(stats, colWidths=[WIDTH / 3] * 3), Spacer(1, 12),
                   self.p('人事优先归类，避免重复计数；日期按各分类倒序排列。', 'small'), Spacer(1, 10),
                   self.box(self.p(self.coverage_notice(), 'small'), '#FAF5EA')]
@@ -205,7 +209,7 @@ class Layout:
         for prefix, label, records in self.groups:
             if not records:
                 continue
-            group_heading = self.heading(label)
+            group_heading = self.p(f'<a name="list-{prefix}"/>' + safe_text(label), 'heading', True)
             group_heading.keepWithNext = False
             story.append(CondPageBreak(85))
             story.append(group_heading)

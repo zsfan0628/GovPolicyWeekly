@@ -27,20 +27,24 @@ def apply_scope(source: dict, policy: dict) -> dict:
 
 def core_urls(source: dict, full_scan: bool = False) -> list[str]:
     scope = source.get("crawl_scope", {}) if not full_scan else {}
-    return list(scope.get("urls") or [source["base_url"], *source.get("list_urls", [])])
+    urls = scope.get("urls") or [source["base_url"], *source.get("list_urls", [])]
+    overrides = source.get('entry_overrides', {})
+    return list(dict.fromkeys(overrides.get(url, url) for url in urls))
 
 
 def channel_allowed(source: dict, url: str, label: str, full_scan: bool = False) -> bool:
+    if url in source.get('entry_overrides', {}):
+        return False
     scope = source.get("crawl_scope", {}) if not full_scan else {}
     if not scope:
         return True
-    if url in scope["urls"]:
+    if url in core_urls(source):
         return True
     if column_name(label) not in scope["column_names"]:
         return False
     target = urlparse(url)
     # Follow named subcolumns inside a core branch, not unrelated links in the global menu.
-    for root in scope["urls"]:
+    for root in core_urls(source):
         seed = urlparse(root)
         parent = seed.path if seed.path.endswith("/") else seed.path.rsplit("/", 1)[0] + "/"
         if target.netloc == seed.netloc and parent != "/" and target.path.startswith(parent):

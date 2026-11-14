@@ -18,6 +18,7 @@ from urllib3.util.retry import Retry
 
 from .parser import extract_redirect_url, extract_static_script_urls, navigation_soup, script_written_html
 from .date_utils import TZ
+from .crawl_issues import NonHtmlContent
 
 
 class HttpClient:
@@ -72,6 +73,8 @@ class HttpClient:
                 if self.browser_fallback and self._needs_browser_render(html, final_url):
                     return self._fetch_text_browser(final_url)
                 return html, final_url
+            except NonHtmlContent:
+                raise
             except Exception as e:
                 errors.append(f"{try_url} -> {e}")
                 if self.browser_fallback and self._should_try_browser(e):
@@ -105,7 +108,7 @@ class HttpClient:
         # 有些政府站点的附件链接也会被列表页抓到，甚至返回 .doc/.wps/.pdf 二进制内容。
         # 这些内容如果误当网页正文写入 Excel，会触发 openpyxl IllegalCharacterError。
         if self._looks_like_binary_response(resp):
-            raise RuntimeError(f"非HTML页面/疑似附件二进制内容，跳过: {resp.url}")
+            raise NonHtmlContent("非 HTML 文档或附件，不作为网页正文解析")
 
         if not resp.encoding or resp.encoding.lower() in {"iso-8859-1", "ascii"}:
             resp.encoding = resp.apparent_encoding or "utf-8"
@@ -263,7 +266,7 @@ class HttpClient:
         content_type = (resp.headers.get("content-type") or "").lower().split(";")[0].strip()
         path = urlparse(resp.url).path.lower()
         binary_exts = (
-            ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".wps", ".et",
+            ".pdf", ".ofd", ".doc", ".docx", ".xls", ".xlsx", ".wps", ".et",
             ".zip", ".rar", ".7z", ".png", ".jpg", ".jpeg", ".gif", ".mp4", ".avi"
         )
         if path.endswith(binary_exts):

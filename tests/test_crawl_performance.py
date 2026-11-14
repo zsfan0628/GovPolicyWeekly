@@ -50,7 +50,8 @@ class ScopeTests(unittest.TestCase):
             self.assertFalse(any(source["channel_names"][url] in excluded for url in core_urls(source)))
             personnel = {url for url, name in source["channel_names"].items()
                          if name in {"人事任免", "人事信息", "干部任免", "人事工作信息"}}
-            self.assertTrue(personnel.issubset(core_urls(source)))
+            overrides = source.get('entry_overrides', {})
+            self.assertTrue({overrides.get(url, url) for url in personnel}.issubset(core_urls(source)))
 
     def test_scope_does_not_expand_into_a_global_menu_or_lifestyle_column(self):
         source = apply_scope({"base_url": "https://example.gov.cn/", "list_urls": ["https://example.gov.cn/policy/"],

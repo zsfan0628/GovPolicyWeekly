@@ -1003,6 +1003,13 @@
   base_url: http://sthj.hlj.gov.cn/
   region: 黑龙江
   department: 生态环境
+  # Preserve the audit inventory; use the public directory API for these channels.
+  entry_overrides:
+    http://sthj.hlj.gov.cn/sthj/c111964/public_zfxxgk.shtml?tab=zcjd: http://sthj.hlj.gov.cn/common/getChannelList?channelCode=c111964&websiteCodeName=sthj
+    http://sthj.hlj.gov.cn/sthj/c111958/public_zfxxgk.shtml?tab=gkzc: http://sthj.hlj.gov.cn/common/getChannelList?channelCode=c111958&websiteCodeName=sthj
+    http://sthj.hlj.gov.cn/sthj/c111960/public_zfxxgk.shtml?tab=gfxwj: http://sthj.hlj.gov.cn/common/getChannelList?channelCode=c111960&websiteCodeName=sthj
+    http://sthj.hlj.gov.cn/sthj/c112016/public_zfxxgk.shtml: http://sthj.hlj.gov.cn/common/getChannelList?channelCode=c112016&websiteCodeName=sthj
+    http://sthj.hlj.gov.cn/sthj/c111978/public_zfxxgk.shtml: http://sthj.hlj.gov.cn/common/getChannelList?channelCode=c111978&websiteCodeName=sthj
   list_urls:
   - http://sthj.hlj.gov.cn/sthj/c111952/public_list.shtml
   - http://sthj.hlj.gov.cn/sthj/c111964/public_zfxxgk.shtml?tab=zcjd

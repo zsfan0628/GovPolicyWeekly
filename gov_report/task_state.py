@@ -84,7 +84,7 @@ class TaskState:
         names = [s["name"] for s in meta.get("sources", [])]
         names += [n for n, _, _ in self.rows("source") if n not in names]
         sources = []
-        totals = dict(included=0, excluded=0, out_of_range=0, llm_failed=0, detail_failed=0, pending=0)
+        totals = dict(included=0, excluded=0, out_of_range=0, llm_failed=0, detail_failed=0, pending=0, skipped_attachment=0)
         labels = {"complete": "完成", "partial": "部分失败", "failed": "采集失败", "pending": "未完成"}
         for name in names:
             pages = [dict(url=k, **p) for _, k, p in self.rows("page", name)]
@@ -104,9 +104,11 @@ class TaskState:
             sources.append(dict(name=name, status=status, label=labels[status], pages=len(pages),
                                 failed_pages=failed, counts=counts,
                                 issues=[dict(url=p.get("item", {}).get("url", ""), title=p.get("item", {}).get("title", ""),
-                                             status=p.get("status"), reason=p.get("reason", "")) for p in candidates
+                                             status=p.get("status"), reason=p.get("reason", ""),
+                                             column=p.get("column", ""), failure_kind=p.get("failure_kind", ""),
+                                             http_status=p.get("http_status")) for p in candidates
                                         if p.get("status") in {"llm_failed", "detail_failed", "pending"}],
-                                details=[{k: p.get(k, "") for k in ("url", "column", "status", "reason", "stop")} for p in pages]))
+                                details=[{k: p.get(k, "") for k in ("url", "column", "status", "reason", "stop", "failure_kind", "http_status")} for p in pages]))
         return dict(sources=sources, counts=totals, start_date=meta.get("start_date", ""), end_date=meta.get("end_date", ""),
                     complete=sum(s["status"] == "complete" for s in sources),
                     partial=sum(s["status"] == "partial" for s in sources),

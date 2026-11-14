@@ -19,6 +19,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (BaseDocTemplate, CondPageBreak, Flowable, Frame, HRFlowable, KeepTogether,
                                PageBreak, PageTemplate, Paragraph, Spacer, Table, TableStyle)
+from .crawl_issues import report_issues
 
 
 INK, MUTED, BLUE, GREEN = '#202C35', '#65737B', '#245D80', '#42766B'
@@ -133,6 +134,7 @@ class ReportDocument(BaseDocTemplate):
 class Layout:
     def __init__(self, records, start, end, context):
         self.records, self.groups, self.context = records, grouped_records(records), context or {}
+        self.issues = report_issues(self.context)
         self.period = f'{start:%Y-%m-%d} 至 {end:%Y-%m-%d}'
         self.styles = {
             'body': ParagraphStyle('body', fontName='GovSansRegular', fontSize=10, leading=15, wordWrap='CJK', spaceAfter=4, textColor=colors.HexColor(INK)),
@@ -175,6 +177,8 @@ class Layout:
         return table
 
     def coverage_notice(self):
+        if self.context.get('coverage_note'):
+            return str(self.context['coverage_note'])
         cov = self.context.get('coverage')
         if not cov:
             return '未提供逐站完成记录，不能据此确认全部站点采集完整。'
@@ -182,6 +186,7 @@ class Layout:
         return (f"站点：{cov.get('complete', 0)} 完成 / {cov.get('partial', 0)} 部分失败 / "
                 f"{cov.get('failed', 0)} 采集失败 / {cov.get('pending', 0)} 未完成。\n"
                 f"待模型复判 {counts.get('llm_failed', 0)} 条；详情失败 {counts.get('detail_failed', 0)} 条。\n"
+                f"非正文附件正常跳过 {counts.get('skipped_attachment', 0)} 个（不计为访问失败，未解析附件内容）。\n"
                 '完成仅指配置范围内没有已知失败，不代表覆盖网站所有历史内容。')
 
     def story(self):
@@ -190,7 +195,12 @@ class Layout:
         stats = [[self.p(n, 'stat') for label, n in counts], [self.p(label, 'small') for label, n in counts]]
         story += [Table(stats, colWidths=[WIDTH / 3] * 3), Spacer(1, 12),
                   self.p('人事优先归类，避免重复计数；日期按各分类倒序排列。', 'small'), Spacer(1, 10),
-                  self.box(self.p(self.coverage_notice(), 'small'), '#FAF5EA'),
+                  self.box(self.p(self.coverage_notice(), 'small'), '#FAF5EA')]
+        if self.issues:
+            story += [Spacer(1, 8), self.p(
+                f'本次有 {len(self.issues)} 个页面访问异常或待核查，可能影响报告完整性。'
+                f'<a href="#access-issues" color="{BLUE}"><b>查看文末明细</b></a>。', 'small', True)]
+        story += [
                   self.heading('信息清单', 'list'), self.p('编号定位详情，标题打开原文。', 'small'), Spacer(1, 5)]
         for prefix, label, records in self.groups:
             if not records:
@@ -226,12 +236,11 @@ class Layout:
                 descriptions.append(f"{label}阶段：{data.get('count', 0)} 次，错误 {data.get('errors', 0)} 次")
             story += [self.p('；'.join(descriptions) + '。次数不等于站点数。', 'small'), Spacer(1, 8)]
         for source in (self.context.get('coverage') or {}).get('sources', []):
-            if source.get('status') == 'complete':
+            model_issues = [item for item in source.get('issues', []) if item.get('status') == 'llm_failed']
+            if not model_issues:
                 continue
             story.append(self.heading(source.get('name', '') + ' · ' + source.get('label', '待核查')))
-            for item in source.get('details', []) + source.get('issues', []):
-                if item.get('status') == 'complete':
-                    continue
+            for item in model_issues:
                 title = item.get('column') or item.get('title') or '待处理页面'
                 story.append(self.p(source_link(title, item.get('url', '')), 'body', True))
                 story.append(self.p(item.get('reason') or '未完成，需重试或核查。', 'small'))
@@ -246,6 +255,22 @@ class Layout:
                 story.append(KeepTogether([title, self.p('判定方式：' + str(method), 'small'),
                                            self.p(reason, 'small'), Spacer(1, 9)]))
         story += [self.heading('阅读说明'), self.p('摘要及变动提示来自采集结果，不等同于原文全文或人工核验。重复标题和完全重复片段仅在排版时去重，不补写缺失事实。模型是否参与以各条目的判定记录为准。', 'small')]
+        if self.issues:
+            story += [PageBreak(), self.heading('附录 / 访问异常与待核查页面', 'access-issues'),
+                      self.p('以下为本次采集未完成的页面，不代表网站永久不可用。点击标题或地址可在浏览器手动访问；'
+                             '未识别日期、正文或列表链接的页面属于提取待核查，不一定无法访问。非正文附件正常跳过另计，不混入本清单。', 'small'),
+                      Spacer(1, 10)]
+            for i, item in enumerate(self.issues, 1):
+                label = item.get('title') or item.get('column') or item.get('url') or '未命名页面'
+                url = item.get('url', '')
+                stage = '列表 / 栏目' if item.get('kind') == 'list' else '详情'
+                story += [KeepTogether([
+                    self.box(self.p(f'<b>{i:02d}</b>　' + source_link(label, url), 'entry', True), '#EDF3F6', BLUE),
+                    Spacer(1, 5), self.p(f"{item.get('source', '')} · {stage}", 'small'),
+                    self.p(item.get('reason') or '未完成，需重试或人工核查。'),
+                    self.p(source_link(url or '未记录地址', url), 'small', True),
+                    Spacer(1, 10), HRFlowable(width='100%', thickness=0.4, color=colors.HexColor('#D7E0E5')),
+                    Spacer(1, 12)])]
         return story
 
     def entry(self, key, r):

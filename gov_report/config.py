@@ -24,6 +24,10 @@ def load_sources(path: str | Path) -> list[dict[str, Any]]:
         source.setdefault("list_urls", [])
         source.setdefault("region", "")
         source.setdefault("department", "")
+        if source.get('entry_overrides'):
+            labels = source.setdefault('channel_names', {})
+            for old, replacement in source['entry_overrides'].items():
+                labels.setdefault(replacement, labels.get(old, ''))
     scope_path = Path(path).parent / "crawl_scope.yaml"
     if not scope_path.exists():
         scope_path = Path(__file__).resolve().parent.parent / "config" / "crawl_scope.yaml"

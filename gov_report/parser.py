@@ -6,7 +6,7 @@ import re
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urljoin, urlparse, urldefrag, urlencode
+from urllib.parse import urljoin, urlparse, urldefrag, urlencode, parse_qsl
 
 from bs4 import BeautifulSoup
 from lxml import etree
@@ -14,6 +14,7 @@ from lxml import etree
 from .date_utils import parse_cn_date
 
 ATTACHMENT_EXTS = {
+    ".ofd",
     ".pdf",
     ".doc",
     ".docx",
@@ -25,6 +26,18 @@ ATTACHMENT_EXTS = {
     ".wps",
     ".et",
 }
+
+
+def is_attachment_url(url: str) -> bool:
+    parsed = urlparse(url)
+    if Path(parsed.path).suffix.lower() in ATTACHMENT_EXTS:
+        return True
+    if parsed.path.lower().endswith('/attachmentcontroller/download.do'):
+        return True
+    if parsed.path.lower().rstrip('/') == '/zxfile/reader':
+        return any(key.lower() == 'file' and Path(urlparse(value).path).suffix.lower() in ATTACHMENT_EXTS
+                   for key, value in parse_qsl(parsed.query))
+    return False
 
 CHANNEL_KEYWORDS = [
     "通知公告",
@@ -302,7 +315,7 @@ def discover_channel_urls(html: str, base_url: str, max_channels: int = 12, *, _
     """从首页发现可能有用的栏目页。这里只发现栏目，详情页另行过滤。"""
     urls: list[str] = []
     for item in (_links if _links is not None else extract_links(html, base_url, only_same_site=True)):
-        if is_probably_article_url(item.url) or Path(urlparse(item.url).path).suffix.lower() in ATTACHMENT_EXTS:
+        if is_probably_article_url(item.url) or is_attachment_url(item.url):
             continue
         combined = f"{item.title} {item.url}"
         if any(k in combined for k in CHANNEL_KEYWORDS):
@@ -544,9 +557,8 @@ def extract_attachments(soup: BeautifulSoup, page_url: str) -> list[dict[str, st
         if not url or url in seen:
             continue
         path = urlparse(url).path.lower()
-        ext = Path(path).suffix
         text = clean_text(a.get_text(" ", strip=True) or Path(path).name)
-        if ext in ATTACHMENT_EXTS or ("附件" in text and is_probably_article_url(url) is False):
+        if is_attachment_url(url) or ("附件" in text and is_probably_article_url(url) is False):
             attachments.append({"name": text or Path(path).name or "附件", "url": url})
             seen.add(url)
     return attachments

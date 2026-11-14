@@ -18,6 +18,7 @@ ApplicationWindow {
     font.family: Qt.platform.os === "osx" ? "PingFang SC" : "Microsoft YaHei UI"
     font.pixelSize: 13
     property int page: 0
+    property bool siteMapMode: true
     property bool reducedMotion: false
     property bool reducedTransparency: !preview.shaderSupported
     readonly property bool wallpaperReady: wallpaper.status === Image.Ready
@@ -108,10 +109,10 @@ ApplicationWindow {
     Connections { target: sources; function onSelectionChanged() { root.queueSave() } }
     SequentialAnimation {
         id: intro
-        NumberAnimation { target: root; property: "glyphReveal"; to: 1; duration: 1250; easing.type: Easing.Linear }
+        NumberAnimation { target: root; property: "glyphReveal"; to: 1; duration: 2400; easing.type: Easing.Linear }
         ParallelAnimation {
-            NumberAnimation { target: root; property: "logoTravel"; to: 1; duration: 550; easing.type: Easing.InOutCubic }
-            NumberAnimation { target: root; property: "reveal"; to: 1; duration: 550; easing.type: Easing.OutCubic }
+            NumberAnimation { target: root; property: "logoTravel"; to: 1; duration: 600; easing.type: Easing.InOutCubic }
+            NumberAnimation { target: root; property: "reveal"; to: 1; duration: 600; easing.type: Easing.OutCubic }
         }
         ScriptAction { script: root.booting = false }
     }
@@ -237,7 +238,7 @@ ApplicationWindow {
                 }
                 ColumnLayout {
                     spacing: 2
-                    Text { text: "政策周报"; color: "#213e2e"; font.pixelSize: 17; font.weight: Font.DemiBold }
+                    Text { id: brandTitle; objectName: "brandTitle"; text: "政策周报"; color: "#213e2e"; font.pixelSize: 17; font.weight: Font.DemiBold; opacity: root.booting ? 0 : 1 }
                     Text { text: "POLICY WEEKLY"; color: "#51665a"; font.pixelSize: 9 }
                 }
             }
@@ -682,6 +683,19 @@ ApplicationWindow {
                             SmallLabel { text: "5 个地区 · 6 类部门" }
                         }
                         Item { Layout.fillWidth: true }
+                        TabBar {
+                            id: siteMode; objectName: "siteViewMode"
+                            Layout.preferredWidth: 144
+                            implicitHeight: 36
+                            Layout.minimumHeight: 36; Layout.maximumHeight: 36
+                            padding: 3; spacing: 2
+                            topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0
+                            currentIndex: root.siteMapMode ? 0 : 1
+                            onCurrentIndexChanged: root.siteMapMode = currentIndex === 0
+                            background: Rectangle { radius: 6; color: "#e9f0eb" }
+                            SegmentTab { objectName: "mapViewTab"; text: "地图"; height: siteMode.availableHeight }
+                            SegmentTab { objectName: "listViewTab"; text: "列表"; height: siteMode.availableHeight }
+                        }
                         Field { id: manageSearch; objectName: "manageSearch"; Layout.preferredWidth: 235; placeholderText: "搜索站点或地区"; onTextChanged: manageFilter.query = text }
                     }
                     RowLayout {
@@ -691,7 +705,13 @@ ApplicationWindow {
                         SmallLabel { text: "已选择 " + sources.selectedCount + " / " + sources.total }
                     }
                     Separator {}
+                    SiteMapView {
+                        Layout.fillWidth: true; Layout.fillHeight: true
+                        visible: root.siteMapMode; reducedMotion: root.reducedMotion
+                        query: manageSearch.text
+                    }
                     RowLayout {
+                        visible: !root.siteMapMode
                         Layout.fillWidth: true; Layout.leftMargin: 44; Layout.rightMargin: 8; spacing: 12
                         SmallLabel { text: "站点名称"; Layout.fillWidth: true }
                         SmallLabel { text: "地区"; Layout.preferredWidth: 42 }
@@ -701,6 +721,7 @@ ApplicationWindow {
                     }
                     ListView {
                         id: manageList; objectName: "manageList"
+                        visible: !root.siteMapMode
                         Layout.fillWidth: true; Layout.fillHeight: true
                         model: manageFilter; clip: true; spacing: 0
                         ScrollBar.vertical: ScrollBar { width: 8 }
@@ -931,6 +952,7 @@ ApplicationWindow {
         progress: root.glyphReveal
         departure: root.logoTravel
         reducedMotion: root.reducedMotion
+        brandTarget: brandTitle
         onSkipRequested: root.finishIntro()
     }
     Rectangle {

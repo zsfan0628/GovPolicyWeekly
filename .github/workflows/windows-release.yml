@@ -12,7 +12,7 @@ on:
       version:
         description: Release version (without the v prefix)
         required: true
-        default: '1.3.0'
+        default: '1.4.0'
       publish:
         description: Publish checked installer and portable downloads
         type: boolean
@@ -49,7 +49,7 @@ jobs:
         shell: pwsh
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-          REQUESTED_VERSION: ${{ inputs.version || '1.3.0' }}
+          REQUESTED_VERSION: ${{ inputs.version || '1.4.0' }}
           PYTHONUTF8: '1'
         run: |
           $version = $env:REQUESTED_VERSION
@@ -60,6 +60,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed' }
           python desktop_app.py --smoke-test --artifacts release-check/desktop-integration
           if ($LASTEXITCODE -ne 0) { throw 'Real desktop integration checks failed' }
+          python -m scripts.test_site_map
+          if ($LASTEXITCODE -ne 0) { throw 'Site map interaction checks failed' }
+          python -m scripts.preview_map_intro
+          if ($LASTEXITCODE -ne 0) { throw 'Particle startup checks failed' }
           ./scripts/build_release.ps1 -Version $version
       - name: Save download files
         uses: actions/upload-artifact@v4
@@ -81,6 +85,11 @@ jobs:
             release-check/*.json
             release-check/desktop-integration/checks.json
             release-check/desktop-integration/*.png
+            release-check/site-map/*.png
+            release-check/map-intro-frames/018.png
+            release-check/map-intro-frames/035.png
+            release-check/map-intro-frames/065.png
+            release-check/map-intro-frames/090.png
           retention-days: 3
           if-no-files-found: ignore
 

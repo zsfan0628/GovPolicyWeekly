@@ -114,6 +114,22 @@ class PdfReportTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), b'previous report')
         self.assertEqual(list(self.root.glob('.report-*')), [])
 
+    def test_first_page_links_to_final_failure_appendix_and_all_urls_are_clickable(self):
+        issues = [dict(url=f'https://example.gov.cn/missing/{i}?a=1&b=2', title=f'访问失败页面{i}',
+                       status='detail_failed', reason='HTTP 404：页面不存在') for i in range(35)]
+        context = {'coverage': {'partial': 1, 'counts': {'detail_failed': 35, 'skipped_attachment': 18},
+                               'sources': [dict(name='测试单位', status='partial', issues=issues)]}}
+        reader = self.export([self.record()], context)
+        self.assertIn('35 个页面', reader.pages[0].extract_text())
+        destinations = [ref.get_object()['/Dest'] for ref in reader.pages[0].get('/Annots', [])
+                        if '/Dest' in ref.get_object()]
+        appendix = next(i for i,p in enumerate(reader.pages) if '附录 / 访问异常与待核查页面' in p.extract_text())
+        self.assertTrue(any(dest[0] == reader.pages[appendix].indirect_reference for dest in destinations))
+        urls = [ref.get_object().get('/A', {}).get('/URI') for p in reader.pages[appendix:] for ref in p.get('/Annots', [])]
+        for issue in issues:
+            self.assertGreaterEqual(urls.count(issue['url']), 2)
+        self.assertIn('访问失败页面34', reader.pages[-1].extract_text())
+
 
 if __name__ == '__main__':
     unittest.main()

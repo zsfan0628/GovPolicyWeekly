@@ -10,6 +10,7 @@ Button {
     implicitHeight: compact ? 30 : 36
     implicitWidth: text.length ? contentItem.implicitWidth + 26 : implicitHeight
     padding: 0
+    topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0
     hoverEnabled: true
     opacity: enabled ? 1 : 0.38
     Accessible.name: text || hint
@@ -28,9 +29,12 @@ Button {
         implicitHeight: contents.implicitHeight
         Row {
             id: contents
+            objectName: "buttonContents"
             spacing: 7
+            height: Math.max(buttonIcon.visible ? buttonIcon.height : 0, buttonLabel.visible ? buttonLabel.implicitHeight : 0)
             anchors.centerIn: parent
             Icon {
+                id: buttonIcon; objectName: "buttonIcon"
                 name: control.iconName
                 visible: name.length > 0
                 width: 16; height: 16
@@ -38,6 +42,7 @@ Button {
                 tint: control.tone === "primary" ? "#ffffff" : control.tone === "danger" ? "#a64e50" : "#63746a"
             }
             Text {
+                id: buttonLabel; objectName: "buttonLabel"
                 anchors.verticalCenter: parent.verticalCenter
                 visible: text.length > 0
                 text: control.text

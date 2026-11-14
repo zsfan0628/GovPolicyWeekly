@@ -18,12 +18,13 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from .classifier import classify, contains_any, make_summary, extract_change_points, looks_like_project_eia_publicity
 from .cache import ArticleCache
+from .crawl_issues import NonHtmlContent, failure_details
 from .llm_classifier import LLMClassifier
 from .date_utils import fmt_date, in_range
 from .http import HttpClient, sanitize_filename
 from .metrics import RunMetrics
 from .pagination import DateWindow
-from .parser import (ATTACHMENT_EXTS, Article, LinkItem, discover_channel_urls, extract_article, extract_links,
+from .parser import (Article, LinkItem, is_attachment_url, discover_channel_urls, extract_article, extract_links,
                      extract_pagination_urls, is_probably_article_url, clean_text, navigation_soup)
 from .scope import channel_allowed, core_urls
 
@@ -64,6 +65,7 @@ class GovCrawler:
         self.save_rejected = save_rejected
         self.logs: list[str] = []
         self.rejected: list[dict] = []
+        self._skipped_attachments = set()
         self.llm = LLMClassifier(enabled=use_llm, cache_enabled=use_cache)
         self.allow_rule_fallback = allow_rule_fallback
         self.llm_used_count = 0
@@ -107,6 +109,9 @@ class GovCrawler:
         self.progress("stage_started", kind=kind, source=source, url=url, column=column)
         try:
             yield extra
+        except NonHtmlContent:
+            extra['skipped' if kind == 'detail' else 'error'] = True
+            raise
         except Exception:
             extra["error"] = True
             raise
@@ -204,6 +209,8 @@ class GovCrawler:
         page_fingerprints: dict[str, set[str]] = {}
         jcms_bridges = set()
         channel_names = dict(source.get("channel_names") or {})
+        for old, replacement in source.get('entry_overrides', {}).items():
+            channel_names.setdefault(replacement, channel_names.get(old, ''))
         discovered = 0
         list_count = 0
         date_windows = {}
@@ -267,6 +274,9 @@ class GovCrawler:
 
                 next_urls = extract_pagination_urls(html, final_url, _soup=soup)
                 navigation_keys.update(normalize_url_for_dedupe(url) for url in next_urls)
+                for item in links:
+                    if is_attachment_url(item.url):
+                        self._skip_attachment(source, item, column)
                 content_items = [
                     x for x in links
                     if normalize_url_for_dedupe(x.url) not in navigation_keys
@@ -322,7 +332,7 @@ class GovCrawler:
             except Exception as e:
                 if self.task_state:
                     self.task_state.put("page", name, list_url, {"status": "failed", "column": column,
-                                                               "reason": type(e).__name__})
+                                                               **failure_details(e)})
                 self.progress("error", source=name, kind="list")
                 self.log(f"列表页失败: {list_url} | {e}")
 
@@ -360,8 +370,11 @@ class GovCrawler:
 
     def process_candidate(self, source, item, start, end, column=""):
         name = source["name"]
+        if is_attachment_url(item.url):
+            self._skip_attachment(source, item, column)
+            return None, 0
         saved = self.task_state.get("candidate", name, item.url) if self.task_state else None
-        if saved and saved.get("status") in {"included", "excluded", "out_of_range"}:
+        if saved and saved.get("status") in {"included", "excluded", "out_of_range", "skipped_attachment"}:
             return saved.get("record"), 0
         payload = dict(saved or {}, item={**asdict(item), "publish_date": item.publish_date.isoformat() if item.publish_date else None},
                        column=column, status="pending")
@@ -390,7 +403,7 @@ class GovCrawler:
             pub_date = article.publish_date or item.publish_date
             if pub_date is None or not article.text.strip():
                 reason = "未识别发布日期" if pub_date is None else "未提取到正文"
-                checkpoint("detail_failed", reason=reason)
+                checkpoint("detail_failed", reason=reason, failure_kind="content_unparsed")
                 self.progress("error", source=name, kind="detail")
                 self.log(f"详情页待核查: {item.url} | {reason}")
                 return None, fetched
@@ -410,11 +423,25 @@ class GovCrawler:
             self.progress("record_included", source=name)
             self.log(f"命中: {fmt_date(pub_date)} | {record['category']} | {record['title']} | {record['url']} | 判定:{record.get('decision_source','')}")
             return record, fetched
+        except NonHtmlContent:
+            self._skip_attachment(source, item, column)
+            return None, fetched
         except Exception as error:
-            checkpoint("detail_failed", reason=type(error).__name__)
+            checkpoint("detail_failed", **failure_details(error))
             self.progress("error", source=name, kind="detail")
             self.log(f"详情页失败: {item.url} | {error}")
             return None, fetched
+
+    def _skip_attachment(self, source, item, column):
+        key = (source['name'], item.url)
+        if key in self._skipped_attachments:
+            return
+        self._skipped_attachments.add(key)
+        if self.task_state:
+            self.task_state.put('candidate', source['name'], item.url, dict(
+                item={**asdict(item), 'publish_date': item.publish_date.isoformat() if item.publish_date else None},
+                column=column, status='skipped_attachment', reason='非正文附件，正常跳过；未解析附件内容'))
+        self.log(f'附件入口正常跳过（非网页正文）: {item.url}')
 
     def retry_model_failures(self, start, end):
         if not self.task_state:
@@ -438,7 +465,7 @@ class GovCrawler:
             "依申请公开", "网站地图", "隐私声明", "联系我们",
         }:
             return False
-        if Path(urlparse(item.url).path).suffix.lower() in ATTACHMENT_EXTS:
+        if is_attachment_url(item.url):
             return False
         title_context = f"{item.title} {item.context} {item.url}"
         strong_title_hit = contains_any(

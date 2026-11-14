@@ -16,6 +16,13 @@ arbitrary result counts and paginates dynamically rather than fixing six items t
 - Coverage comes from the actual task, never sample constants. Missing historical
   coverage is marked unknown. Empty results are not presented as proof of a complete search.
 - Judgment methods/reasons and known collection failures appear in an appendix.
+- A first-page warning links directly to the final access-issues appendix. Every
+  unresolved list/detail URL is listed with its source, stage and safe diagnostic;
+  both the title and full address are clickable. Successful retries remove resolved
+  entries. Model-call failures remain separate from website access failures.
+- Document/attachment endpoints (including OFD and document viewers) are skipped
+  separately from failed HTML requests. The overview states that attachment content
+  was not parsed; skipped documents are not evidence of complete content coverage.
 - Only exact repeated fragments and repeated titles are removed from display summaries.
   Raw result data is not changed; truncated or missing facts are not invented.
 

@@ -1,8 +1,17 @@
-# GovPolicyWeekly v1.3.0
+# GovPolicyWeekly v1.4.0
 
 ## English
 
-Desktop layout fixes, linked PDF reports and recoverable collection tasks in the original glass-style workspace.
+Offline site maps, particle-map startup, balanced controls and transparent collection diagnostics.
+
+- Switch between a regional site map and the original list. Search across regions, select individual websites or a whole region, and open their addresses. Map assets are bundled and do not require an online tile service.
+- Show a three-second particle-world-map introduction that focuses on China and forms the application title. Skip and reduced-motion settings remain available.
+- Keep segmented controls, command buttons, icon buttons and switches evenly aligned.
+- Jump from the PDF overview to the final access-issues appendix. Unresolved pages include clickable titles/addresses and sanitized failure reasons; document/attachment skips are counted separately.
+- Route selected Heilongjiang dynamic columns through their public directory APIs. Failed network, certificate or access checks remain visible; this is not a guarantee that all sites are reachable.
+- DeepSeek-compatible model catalogue and JSON generation paths are covered by mocked tests, not paid live-provider verification.
+
+Map points are regional/city representatives, not verified office locations. The map is a schematic visualization, not an official administrative-boundary reference.
 
 - Fix overlapping date presets and request-interval controls. Keep comfortable row spacing and scrolling at smaller window sizes, and align single-line and wrapped log messages.
 - Support the standard window-close shortcut, including Command+W on macOS, with confirmation while collecting. Retain site selection without separate connectivity probes.
@@ -15,7 +24,7 @@ Desktop layout fixes, linked PDF reports and recoverable collection tasks in the
 - Reuse article/model caches across date ranges. Recent articles are re-fetched; older snapshots can be reused for up to seven days. Full-scan and no-cache controls remain available.
 - Attachment downloads start off on every launch. When enabled, PDF export finishes before attachment downloads.
 
-- **Installer:** `GovPolicyWeekly_Setup_1.3.0.exe`.
+- **Installer:** `GovPolicyWeekly_Setup_1.4.0.exe`.
 - **Portable:** fully extract `GovPolicyWeekly_windows_portable.zip`, then run `GovPolicyWeekly/GovPolicyWeekly.exe`. Keep all supporting folders.
 - **Checksums:** `SHA256SUMS.txt`.
 
@@ -27,7 +36,16 @@ Publication is gated on regression tests, local-fixture desktop integration, sou
 
 ## 简体中文
 
-本版保留原有玻璃质感界面，更新界面排版、PDF 样式和任务恢复能力。
+本版更新离线站点地图、颗粒启动动画、按钮排版和 PDF 访问异常明细。
+
+- 站点管理支持地图／列表切换、地区聚合、跨地区搜索、网站勾选与本地区全选，并可打开网站地址；地图资源随包携带，无需在线地图服务。
+- 约三秒颗粒世界地图启动动画：中国聚焦、标题成形并移向品牌位置，保留跳过与减少动态效果。
+- 统一地图／列表分段控件、命令按钮、图标按钮和开关的内边距与居中。
+- PDF 首页可跳转文末异常清单，页面标题和地址可点击；访问失败、模型失败和非正文附件正常跳过分别记录。
+- 黑龙江部分动态栏目改用同栏目的公开目录接口；网络、证书或访问限制仍如实报出，不保证全部网站实时可达。
+- 增加 DeepSeek 模型列表与 JSON 生成兼容测试，使用模拟接口，未消耗用户 API 额度。
+
+地图节点代表地区／城市，不是已核实的机关办公地址；地图仅作区域示意，不作为标准行政区划地图。
 
 - 修复日期快捷按钮、请求间隔控件与下一行挤压的问题；统一控件间距，小窗口使用滚动展示，日志单行与多行保持对齐。
 - 支持系统标准关闭快捷键（macOS 为 Command+W），采集过程中先确认再退出；移除独立连通检测，保留站点搜索和勾选。
@@ -42,7 +60,7 @@ Publication is gated on regression tests, local-fixture desktop integration, sou
 
 下载方式：
 
-- `GovPolicyWeekly_Setup_1.3.0.exe`：安装版，双击安装后从开始菜单或桌面快捷方式打开。
+- `GovPolicyWeekly_Setup_1.4.0.exe`：安装版，双击安装后从开始菜单或桌面快捷方式打开。
 - `GovPolicyWeekly_windows_portable.zip`：便携版，完整解压后打开 `GovPolicyWeekly/GovPolicyWeekly.exe`。
 - `SHA256SUMS.txt`：下载文件的 SHA-256 校验值。
 

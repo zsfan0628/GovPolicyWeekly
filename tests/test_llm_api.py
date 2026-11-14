@@ -153,6 +153,22 @@ class NegotiationTests(unittest.TestCase):
         self.assertTrue(result["call_succeeded"])
         self.assertEqual(result["response_mode"], "json_object")
 
+    def test_deepseek_catalogue_and_json_object_with_separate_reasoning(self):
+        from gov_report.desktop import fetch_model_catalogue
+        with patch('gov_report.desktop.requests.get', return_value=response({'data': [{'id': 'deepseek-flash'}]})) as get:
+            models, base = fetch_model_catalogue('https://api.deepseek.com', 'fixture-key', True)
+            self.assertEqual(models, ['deepseek-flash'])
+            self.assertEqual(base, 'https://api.deepseek.com')
+            self.assertEqual(get.call_args.args[0], 'https://api.deepseek.com/models')
+        with patch.multiple('gov_report.llm_classifier', OPENAI_BASE_URL=base, OPENAI_MODEL='deepseek-flash'):
+            self.post.side_effect = [response({'error': {'message': 'json_schema unsupported'}}, 400),
+                                     chat(reasoning_content='not the final judgment')]
+            result = self.classifier.classify_article({'title': 'fixture'})
+        self.assertTrue(result['call_succeeded'])
+        self.assertEqual(result['response_mode'], 'json_object')
+        self.assertEqual(self.post.call_args.args[0], base + '/chat/completions')
+        self.assertEqual(self.post.call_args.kwargs['json']['model'], 'deepseek-flash')
+
     def test_unsupported_temperature_is_removed_without_changing_model(self):
         self.post.side_effect = [response({"error": {"message": "temperature not supported"}}, 400), chat(), chat()]
         self.assertTrue(self.classifier.classify_article({})["call_succeeded"])

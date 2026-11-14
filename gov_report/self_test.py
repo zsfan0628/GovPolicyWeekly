@@ -117,7 +117,7 @@ def run_self_test(result_path: Path) -> int:
 def check_glass_workspace(application) -> None:
     from PySide6.QtCore import QEventLoop, QObject, QTimer, QUrl
     from PySide6.QtQml import QQmlApplicationEngine
-    from ui_preview import Icons, Sources, SourceFilter, UI
+    from ui_preview import Icons, IntroTitleImage, Sources, SourceFilter, UI
     from gov_report.desktop import DesktopController, SettingsStore
     import shiboken6
 
@@ -129,13 +129,16 @@ def check_glass_workspace(application) -> None:
         controller = DesktopController(sources, store)
         source_filter = SourceFilter(sources)
         manage_filter = SourceFilter(sources)
+        map_filter = SourceFilter(sources)
         log_filter = SourceFilter(controller.logs, ("logTime", "level", "message"), dynamic=True)
         engine = QQmlApplicationEngine()
         engine.addImageProvider("icons", Icons())
+        engine.addImageProvider('intro', IntroTitleImage(controller.intro_title_image))
         warnings = []
         engine.warnings.connect(lambda items: warnings.extend(item.toString() for item in items))
         for name, value in {"preview": controller, "sources": sources, "sourceFilter": source_filter,
-                            "manageFilter": manage_filter, "logModel": log_filter, "reportModel": controller.reports}.items():
+                            "manageFilter": manage_filter, "mapFilter": map_filter,
+                            "logModel": log_filter, "reportModel": controller.reports}.items():
             engine.rootContext().setContextProperty(name, value)
         try:
             engine.load(QUrl.fromLocalFile(str(UI / "Main.qml")))

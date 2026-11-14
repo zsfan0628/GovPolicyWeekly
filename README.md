@@ -6,6 +6,12 @@ A desktop tool for collecting Chinese government policy and personnel announceme
 
 ## Desktop Workspace
 
+PDF overviews now link to a final appendix of unresolved website requests, with
+clickable page addresses and reasons. Non-HTML attachments are counted separately.
+DeepSeek can be configured with `https://api.deepseek.com`, your own API key, and
+a model selected from **Get models**. Use **Test actual call** to verify generation;
+the test consumes API usage and requires confirmation.
+
 Site management shows loaded configuration, not live connectivity status.
 
 An optional compact sidebar workspace is available with

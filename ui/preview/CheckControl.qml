@@ -7,6 +7,8 @@ AbstractButton {
     implicitHeight: 30
     implicitWidth: label.implicitWidth + 28
     checkable: true
+    padding: 0
+    topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0
     hoverEnabled: true
     contentItem: Item {
         Rectangle {

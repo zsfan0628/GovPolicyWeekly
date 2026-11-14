@@ -84,6 +84,21 @@ class Sources(Rows):
     def total(self):
         return len(self.rows)
 
+    @Property('QVariantMap', notify=selectionChanged)
+    def regionCounts(self):
+        result = {}
+        for row in self.rows:
+            entry = result.setdefault(row['region'], {'total': 0, 'selected': 0})
+            entry['total'] += 1
+            entry['selected'] += int(row['selected'])
+        return result
+
+    @Slot(str, bool)
+    def selectRegion(self, region, selected):
+        for row in self.rows:
+            if row['region'] == region and row['selected'] != selected:
+                self.toggle(row['siteId'])
+
     @Slot(int)
     def toggle(self, site_id):
         if not 0 <= site_id < len(self.rows):
@@ -109,6 +124,7 @@ class SourceFilter(QSortFilterProxyModel):
     def __init__(self, model, fields=("siteName", "region", "department", "siteUrl"), dynamic=False):
         super().__init__()
         self._query = ""
+        self._region = ""
         self._fields = fields
         self.setSourceModel(model)
         # Selection edits must not rebuild or reorder the filtered list.
@@ -128,9 +144,23 @@ class SourceFilter(QSortFilterProxyModel):
 
     def filterAcceptsRow(self, row, parent):
         source = self.sourceModel().rows[row]
+        if self._region and source.get('region') != self._region:
+            return False
         return self._query.strip().lower() in " ".join(
             str(source[key]) for key in self._fields
         ).lower()
+
+    @Property(str, notify=queryChanged)
+    def region(self):
+        return self._region
+
+    @region.setter
+    def region(self, value):
+        if value != self._region:
+            self._region = value
+            self.beginFilterChange()
+            self.endFilterChange(QSortFilterProxyModel.Direction.Rows)
+            self.queryChanged.emit()
 
 
 class Icons(QQuickImageProvider):
@@ -151,6 +181,15 @@ class Icons(QQuickImageProvider):
             painter.fillRect(image.rect(), QColor("#" + (color or "96999f")))
             painter.end()
         return image
+
+
+class IntroTitleImage(QQuickImageProvider):
+    def __init__(self, image):
+        super().__init__(QQuickImageProvider.Image)
+        self.image = image
+
+    def requestImage(self, image_id, size, requested_size):
+        return self.image
 
 
 class Workspace(QObject):
@@ -182,6 +221,28 @@ class Workspace(QObject):
         top = min(y for _, y in points); bottom = max(y for _, y in points)
         self._intro_points_json = json.dumps([dict(x=(x - left) / max(1, right - left), y=(y - top) / max(1, bottom - top))
                                              for x, y in points])
+        self.intro_title_image = mask.copy(left, top, right-left+1, bottom-top+1)
+        painter = QPainter(self.intro_title_image)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+        painter.fillRect(self.intro_title_image.rect(), QColor('#234b3f'))
+        painter.end()
+        world = QImage(720, 360, QImage.Format_ARGB32_Premultiplied)
+        china = QImage(574, 410, QImage.Format_ARGB32_Premultiplied)
+        for image, name in ((world, 'world-outline'), (china, 'china-region')):
+            image.fill(Qt.transparent)
+            painter = QPainter(image)
+            QSvgRenderer(str(UI / 'assets' / (name + '.svg'))).render(painter)
+            painter.end()
+        points = []
+        for y in range(3, 335, 5):
+            for x in range(3, 720, 5):
+                if world.pixelColor(x, y).alpha() < 128:
+                    continue
+                lon, lat = x / 2 - 180, 90 - y / 2
+                cx, cy = int((lon-70)*8.2), int((56-lat)*10)
+                focused = 0 <= cx < china.width() and 0 <= cy < china.height() and china.pixelColor(cx, cy).alpha() > 128
+                points.append(dict(x=x/720, y=y/360, china=focused))
+        self._intro_map_json = json.dumps(points)
         self.logs = Rows([], ["logTime", "level", "message"])
         self.reports = Rows([], ["reportName", "reportPath", "reportDate", "reportSize"])
         self._model_options = []
@@ -243,7 +304,8 @@ class Workspace(QObject):
                 f"站点：{data.get('complete', 0)} 完成 · {data.get('partial', 0)} 部分失败 · "
                 f"{data.get('failed', 0)} 采集失败 · {data.get('pending', 0)} 未完成\n"
                 f"候选：{counts.get('included', 0)} 收录 · {counts.get('excluded', 0)} 排除 · "
-                f"{counts.get('llm_failed', 0)} 待复判 · {counts.get('detail_failed', 0)} 详情失败")
+                f"{counts.get('llm_failed', 0)} 待复判 · {counts.get('detail_failed', 0)} 详情失败\n"
+                f"非正文附件正常跳过 {counts.get('skipped_attachment', 0)} 个")
 
     @Property(bool, notify=changed)
     def stopping(self):
@@ -256,6 +318,14 @@ class Workspace(QObject):
     @Property(str, constant=True)
     def introPointsJson(self):
         return self._intro_points_json
+
+    @Property(str, constant=True)
+    def introMapJson(self):
+        return self._intro_map_json
+
+    @Property(float, constant=True)
+    def introTitleAspect(self):
+        return self.intro_title_image.width() / self.intro_title_image.height()
 
     @Property(bool, constant=True)
     def shaderSupported(self):
@@ -472,12 +542,14 @@ def launch_workspace(factory, smoke_check=None, artifacts=None, design_preview=F
     sources, backend = factory()
     source_filter = SourceFilter(sources)
     manage_filter = SourceFilter(sources)
+    map_filter = SourceFilter(sources)
     log_filter = SourceFilter(backend.logs, ("logTime", "level", "message"), dynamic=True)
     engine = QQmlApplicationEngine()
     engine.addImageProvider("icons", Icons())
+    engine.addImageProvider('intro', IntroTitleImage(backend.intro_title_image))
     for name, value in {
         "preview": backend, "sources": sources, "sourceFilter": source_filter,
-        "manageFilter": manage_filter, "logModel": log_filter, "reportModel": backend.reports,
+        "manageFilter": manage_filter, "mapFilter": map_filter, "logModel": log_filter, "reportModel": backend.reports,
     }.items():
         engine.rootContext().setContextProperty(name, value)
     errors = []

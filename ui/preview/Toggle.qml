@@ -6,9 +6,10 @@ AbstractButton {
     implicitWidth: 34
     implicitHeight: 22
     checkable: true
+    padding: 0
     hoverEnabled: true
     background: Rectangle {
-        x: 0; y: 2; width: 34; height: 18
+        anchors.centerIn: parent; width: 34; height: 18
         radius: 9
         color: control.checked ? "#448b65" : "#cdd7cf"
         border.width: control.activeFocus ? 1 : 0

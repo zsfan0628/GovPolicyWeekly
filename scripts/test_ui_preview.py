@@ -259,7 +259,7 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         QMetaObject.invokeMethod(window, "replayIntro")
         intro_frames = artifacts / "intro-frames"
         intro_frames.mkdir(exist_ok=True)
-        for frame in range(30):
+        for frame in range(50):
             QTest.qWait(60)
             captured = window.grabWindow()
             captured.scaledToWidth(960, Qt.SmoothTransformation).save(str(intro_frames / f"{frame:03d}.png"))

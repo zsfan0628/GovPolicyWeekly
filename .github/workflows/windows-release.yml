@@ -65,6 +65,10 @@ jobs:
           python -m scripts.preview_map_intro
           if ($LASTEXITCODE -ne 0) { throw 'Horizon calendar transition checks failed' }
           ./scripts/build_release.ps1 -Version $version
+      - name: Verify portable and installer upgrades
+        shell: pwsh
+        run: |
+          $version = '${{ steps.package.outputs.release_tag }}'.TrimStart('v')
           ./scripts/check_windows_upgrade.ps1 -Installer (Resolve-Path "release/GovPolicyWeekly_Setup_$version.exe").Path
       - name: Save download files
         uses: actions/upload-artifact@v4

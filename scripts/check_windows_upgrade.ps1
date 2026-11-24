@@ -6,7 +6,9 @@ $checkRoot = Join-Path $project ('release-check\upgrade-' + [guid]::NewGuid().To
 $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 New-Item -ItemType Directory -Path $checkRoot | Out-Null
 $passed = @()
+$env:GPW_NONINTERACTIVE = '1'
 foreach ($channel in @('portable','installer')) {
+    Write-Host "Testing $channel upgrade"
     $target = Join-Path $checkRoot $channel
     $job = Join-Path $checkRoot ($channel + '-helper')
     New-Item -ItemType Directory -Path $target, $job | Out-Null
@@ -43,6 +45,12 @@ foreach ($channel in @('portable','installer')) {
             throw "$channel upgrade failed to replace only managed files"
         }
         $passed += $channel
+    } catch {
+        foreach ($log in @('update-error.txt','installer-update.log','updated-check.json')) {
+            $logPath = Join-Path $job $log
+            if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath -Tail 32 | Write-Host }
+        }
+        throw
     } finally {
         $exe = Join-Path $target 'GovPolicyWeekly.exe'
         Get-Process -Name GovPolicyWeekly -ErrorAction SilentlyContinue |

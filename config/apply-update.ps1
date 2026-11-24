@@ -32,8 +32,11 @@ try {
     }
     if ($env:GPW_MODE -eq 'installer') {
         $installStarted = $true
-        $p = Start-Process -FilePath $payload -ArgumentList @('/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',('/DIR="' + $target + '"')) -PassThru -Wait
-        if ($p.ExitCode -ne 0) { throw 'Installer failed.' }
+        Write-Output 'Applying the checked installer'
+        $installLog = Join-Path $PSScriptRoot 'installer-update.log'
+        $p = Start-Process -FilePath $payload -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/NORESTARTAPPLICATIONS',('/LOG="' + $installLog + '"'),('/DIR="' + $target + '"')) -PassThru
+        $p.WaitForExit()
+        if ($p.ExitCode -ne 0) { throw "Installer exited with code $($p.ExitCode). See installer-update.log." }
     } else {
         foreach ($name in $names) {
             Move-Item -LiteralPath (Join-Path (Join-Path $payload 'new') $name) -Destination (Join-Path $target $name)
@@ -41,6 +44,7 @@ try {
         }
     }
     $check = Join-Path $PSScriptRoot 'updated-check.json'
+    Write-Output 'Checking the upgraded executable'
     $p = Start-Process -FilePath $exe -ArgumentList @('--self-test', ('"' + $check + '"')) -PassThru
     if (-not $p.WaitForExit(150000)) { $p.Kill(); $p.WaitForExit(); throw 'Update check timed out.' }
     if ($p.ExitCode -ne 0 -or -not (Get-Content -LiteralPath $check -Raw -Encoding UTF8 | ConvertFrom-Json).ok) { throw 'Update check failed.' }
@@ -54,6 +58,7 @@ try {
     }
     foreach ($name in $moved) { Move-Item -LiteralPath (Join-Path $backup $name) -Destination (Join-Path $target $name) }
     $failure | Set-Content (Join-Path $PSScriptRoot 'update-error.txt')
+    if ($env:GPW_NONINTERACTIVE -eq '1') { [Console]::Error.WriteLine($failure); exit 1 }
     Add-Type -AssemblyName System.Windows.Forms
     [System.Windows.Forms.MessageBox]::Show("Update failed. Check update-error.txt in $PSScriptRoot") | Out-Null
     exit 1

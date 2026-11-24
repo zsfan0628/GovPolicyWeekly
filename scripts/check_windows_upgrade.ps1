@@ -38,6 +38,17 @@ foreach ($channel in @('portable','installer')) {
     $env:GPW_PAYLOAD = $payload
     $old = Start-Process -FilePath $shell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 1') -PassThru
     $env:GPW_PID = "$($old.Id)"
+    if ($channel -eq 'installer') {
+        $correctHash = $env:GPW_SHA
+        try {
+            $env:GPW_SHA = '0' * 64
+            $rejected = Start-Process -FilePath $shell -ArgumentList @('-NoProfile','-NonInteractive','-File',('"' + $helper + '"')) -PassThru -Wait
+            if ($rejected.ExitCode -ne 1 -or (Get-Content -LiteralPath (Join-Path $job 'update-error.txt') -Raw).Trim() -ne 'Installer checksum mismatch.' -or -not (Test-Path -LiteralPath $obsolete)) {
+                throw 'A mismatched installer must be rejected before replacing files'
+            }
+            Remove-Item -LiteralPath (Join-Path $job 'update-error.txt')
+        } finally { $env:GPW_SHA = $correctHash }
+    }
     $p = Start-Process -FilePath $shell -ArgumentList @('-NoProfile','-NonInteractive','-File',('"' + $helper + '"')) -PassThru
     try {
         if (-not $p.WaitForExit(240000)) { $p.Kill(); throw "$channel upgrade timed out" }

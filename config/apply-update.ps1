@@ -14,7 +14,14 @@ try {
     $names = @('GovPolicyWeekly.exe', '_internal')
     if ($env:GPW_MODE -eq 'installer') {
         if (-not (Test-Path -LiteralPath (Join-Path $target 'installer.channel'))) { throw 'Installer channel mismatch.' }
-        if ((Get-FileHash -LiteralPath $payload -Algorithm SHA256).Hash -ne $env:GPW_SHA) { throw 'Installer checksum mismatch.' }
+        # A child Windows PowerShell may not inherit a usable module search path.
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $stream = [System.IO.File]::OpenRead($payload)
+            try { $hash = [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '') }
+            finally { $stream.Dispose() }
+        } finally { $sha256.Dispose() }
+        if ($hash -ne $env:GPW_SHA) { throw 'Installer checksum mismatch.' }
     } elseif ($env:GPW_MODE -eq 'portable') {
         $names += 'portable.channel'
         if ((Test-Path -LiteralPath $exe) -and -not (Test-Path -LiteralPath (Join-Path $target 'portable.channel'))) {

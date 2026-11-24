@@ -6,6 +6,11 @@ A desktop tool for collecting Chinese government policy and personnel announceme
 
 ## Desktop Workspace
 
+See [retrieval quality and review artifacts](docs/retrieval-quality.md) for the
+distinction between a verified empty list, a directory and a page needing review.
+Recovery reuses checkpoints; a fresh verification starts a new task without article
+or model caches. A generation HTTP 401 pauses uncached judgments in that run.
+
 PDF overviews now link to a final appendix of unresolved website requests, with
 clickable page addresses and reasons. Non-HTML attachments are counted separately.
 DeepSeek can be configured with `https://api.deepseek.com`, your own API key, and
@@ -14,12 +19,17 @@ the test consumes API usage and requires confirmation.
 
 Site management shows loaded configuration, not live connectivity status.
 
-An optional compact sidebar workspace is available with
-`python desktop_app.py --design-preview`. On macOS, `WorkspacePreview.command`
-opens it using the project environment. It uses the real backend and saved settings;
-it does not start a task automatically. The default layout remains unchanged.
+The local desktop version checks for site and map updates. A download icon appears
+only when an update is available; nothing is installed without confirmation.
+Updater-enabled Windows releases download the complete installer or portable ZIP
+that matches the current installation. Older releases need one manual upgrade first.
+See [update feeds and recovery](docs/software-updates.md).
 
-- Glass-style navigation, a bundled glacier background and an optional startup animation.
+Run `python desktop_app.py`, or double-click `WorkspacePreview.command` on macOS, to open the functional desktop app. It does not start a collection until requested.
+
+- The calendar highlights selected dates and shows the inclusive day count. Browse months within the range or open the latest local PDF by its date range.
+- Collapsible collection controls and a plain-language activity timeline with one row per site; searchable diagnostics remain available separately.
+- A silent 1.8-second opening moves from the world to China, whose grains form the Source Han Serif title and settle into the top-left navigation. Dates appear only in the workspace. Skip the intro or enable reduced motion for immediate entry.
 - Calendar date selection, highlighted 7-day / 30-day presets, and searchable selection across 30 configured sites.
 - Real collection progress, filterable logs, stop controls and report history.
 - OpenAI-compatible model discovery and selection, with an optional rule-based fallback.

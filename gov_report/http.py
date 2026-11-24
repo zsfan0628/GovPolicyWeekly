@@ -143,6 +143,8 @@ class HttpClient:
             date = datetime.fromtimestamp(int(published) / 1000, TZ).strftime("%Y-%m-%d") if str(published).isdigit() else str(published)[:10]
             rows.append(f'<li><a href="{escape(urljoin(response.url, url), quote=True)}">{escape(title)}</a><span>{escape(date)}</span></li>')
         rows.reverse()
+        if not result["dataResults"] and str(result.get("total")) == "0":
+            rows.append('<li data-list-empty>暂无记录</li>')
         params = dict(parse_qsl(urlparse(response.url).query, keep_blank_values=True))
         page, size = int(params.get("p") or 1), int(params.get("pg") or 10)
         if rows and page * size < int(result.get("total", 0)):
@@ -167,6 +169,8 @@ class HttpClient:
         end = int(params["endrecord"])
         size = max(1, int(params["perpage"]))
         total = int(total_node.get_text(strip=True))
+        if total == 0 and soup.find("record") is None:
+            return '<html><body><p data-list-empty>暂无记录</p></body></html>'
         if soup.find("record") is not None and end < total:
             params.update(startrecord=str(end + 1), endrecord=str(min(end + size, total)))
             next_url = urlunparse(urlparse(response.url)._replace(query=urlencode(params)))
@@ -214,6 +218,8 @@ class HttpClient:
         page = int(data.get("page", params.get("page", 1)))
         size = int(data.get("rows", params.get("_pageSize", 15)))
         total = int(data.get("total", len(records)))
+        if not records and str(data.get("total")) == "0":
+            rows.append('<li data-list-empty>暂无记录</li>')
         if records and page * size < total:
             params["page"] = str(page + 1)
             parsed = urlparse(response.url)

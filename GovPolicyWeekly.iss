@@ -31,7 +31,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "dist\GovPolicyWeekly\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\GovPolicyWeekly\*"; DestDir: "{app}"; Excludes: "portable.channel"; Flags: ignoreversion recursesubdirs createallsubdirs
+#if FileExists("dist\GovPolicyWeekly\portable.channel")
+Source: "dist\GovPolicyWeekly\portable.channel"; DestDir: "{app}"; DestName: "installer.channel"; Flags: ignoreversion
+#endif
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

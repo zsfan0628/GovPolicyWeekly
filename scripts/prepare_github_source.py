@@ -68,14 +68,15 @@ def check_payload(relative: Path, payload: bytes, protected: set[str]) -> None:
 
 def collect_paths(root: Path) -> list[Path]:
     paths = [root / name for name in FILES]
+    paths.extend(root/'updates'/name for name in ('sites.json','catalogue.json'))
     for folder in FOLDERS:
         paths.extend(path for path in (root / folder).rglob('*') if path.is_file()
                      and '__pycache__' not in path.parts and path.suffix in {'.py', '.ps1', '.yml', '.yaml', '.txt', '.md'})
     paths.extend(path for path in (root / 'ui' / 'preview').rglob('*') if path.is_file()
-                 and (path.suffix in {'.qml', '.qsb', '.frag', '.svg', '.jpg', '.md'} or path.name == 'LICENSE'))
+                 and (path.suffix in {'.qml', '.js', '.qsb', '.frag', '.svg', '.jpg', '.md'} or path.name in {'LICENSE','intro-grain-world.png','intro-grain-neighbors.png','intro-grain-china.png','intro-grain-flow.png'}))
     paths.extend(path for path in (root / 'assets' / 'fonts').glob('*')
-                 if path.is_file() and path.suffix in {'.ttf', '.txt', '.md'})
-    return sorted(set(paths))
+                 if path.is_file() and path.suffix in {'.ttf', '.otf', '.txt', '.md'})
+    return sorted(set(paths) - {root/'config'/'build-id.txt'})
 
 
 def main() -> None:

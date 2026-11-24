@@ -95,6 +95,7 @@ class LinkItem:
     date_reliable: bool = False
     pinned: bool = False
     in_navigation: bool = False
+    list_date_conflict: bool = False
 
 
 @dataclass
@@ -104,6 +105,7 @@ class Article:
     publish_date: object | None
     text: str
     attachments: list[dict[str, str]]
+    date_source: str = ""
 
 
 def clean_text(text: str) -> str:
@@ -292,7 +294,9 @@ def extract_links(html: str, base_url: str, only_same_site: bool = True, *, _sou
         classes = " ".join(row.get("class", []))
         pinned = bool(re.search(r"(?:^|[\s_-])(?:top|pinned|zhiding)(?:$|[\s_-])", classes, re.I)
                       or row.get("data-top") in {"true", "1"} or "置顶" in parent_text)
-        navigation = a.find_parent(["nav", "header", "footer"]) is not None
+        navigation = (a.find_parent(["nav", "header", "footer"]) is not None or
+                      a.find_parent(attrs={"role": "navigation"}) is not None or
+                      a.find_parent(class_=re.compile(r"^(?:nav|navbar|breadcrumb|footer|site-menu)$", re.I)) is not None)
         date_text = date.strftime("%Y-%m-%d") if date else ""
         results.append(LinkItem(title=title, url=url, publish_date=date, date_text=date_text,
                                 context=parent_text[:300], date_reliable=reliable, pinned=pinned,
@@ -315,7 +319,7 @@ def discover_channel_urls(html: str, base_url: str, max_channels: int = 12, *, _
     """从首页发现可能有用的栏目页。这里只发现栏目，详情页另行过滤。"""
     urls: list[str] = []
     for item in (_links if _links is not None else extract_links(html, base_url, only_same_site=True)):
-        if is_probably_article_url(item.url) or is_attachment_url(item.url):
+        if is_probably_article_url(item.url) or is_attachment_url(item.url) or has_document_headline(item):
             continue
         combined = f"{item.title} {item.url}"
         if any(k in combined for k in CHANNEL_KEYWORDS):
@@ -329,6 +333,12 @@ def discover_channel_urls(html: str, base_url: str, max_channels: int = 12, *, _
         if max_channels > 0 and len(deduped) >= max_channels:
             break
     return deduped
+
+
+def has_document_headline(item: LinkItem) -> bool:
+    # Distinguish an actual notice from a channel called simply "通知公告".
+    return not item.in_navigation and bool(re.search(
+        r"关于.{3,}(?:通知|意见|决定|公告|批复|公示)|(?:任前公示|职务任免).{2,}|〔20\d{2}〕\s*\d+号", item.title))
 
 
 def extract_pagination_urls(html: str, base_url: str, *, _soup: BeautifulSoup | None = None) -> list[str]:
@@ -411,10 +421,10 @@ def extract_article(html: str, url: str, fallback_title: str | None = None, sour
 
     all_text = clean_text(soup.get_text("\n", strip=True))
     title = extract_title(soup, fallback_title=fallback_title, source_name=source_name)
-    publish_date = extract_publish_date(soup, all_text, url)
+    publish_date, date_source = publication_evidence(soup, all_text, url)
     text = extract_main_text(soup)
     attachments = extract_attachments(soup, url)
-    return Article(title=title, url=url, publish_date=publish_date, text=text, attachments=attachments)
+    return Article(title=title, url=url, publish_date=publish_date, text=text, attachments=attachments, date_source=date_source)
 
 
 def extract_title(soup: BeautifulSoup, fallback_title: str | None = None, source_name: str | None = None) -> str:
@@ -491,30 +501,37 @@ def is_valid_title(title: str, source_name: str | None = None) -> bool:
 
 
 def extract_publish_date(soup: BeautifulSoup, all_text: str, url: str):
+    return publication_evidence(soup, all_text, url)[0]
+
+
+def publication_evidence(soup: BeautifulSoup, all_text: str, url: str):
     date_names = {"pubdate", "publishdate", "articletime", "articlepubdate", "articlepublishtime",
                   "article:published_time", "dcext.pubdate", "dcsext.pubdate", "dc.date", "pubtime", "datepublished"}
     for meta in soup.find_all("meta"):
         if (meta.get("name") or meta.get("property") or "").lower() in date_names:
             published = parse_cn_date(meta.get("content", ""))
             if published:
-                return published
+                return published, "发布元数据"
     # 优先匹配“发布时间/发布日期/时间/日期”附近的日期。
     patterns = [
-        r"(?:发布时间|发布日期|发文日期|成文日期|更新时间|时间|日期)[:：\s]*([20]\d{3}[-/.年]\d{1,2}[-/.月]\d{1,2}日?)",
-        r"([20]\d{3}[-/.年]\d{1,2}[-/.月]\d{1,2}日?)",
+        ("发布日期", r"(?:发布时间|发布日期|发布时间戳|发布于)"),
+        ("发文日期", r"(?:发文日期|成文日期)"),
+        ("更新日期", r"(?:更新时间|更新日期)"),
+        ("页面日期线索", ""),
     ]
     head_text = all_text[:2500]
-    for pat in patterns:
-        m = re.search(pat, head_text)
+    for label, pat in patterns:
+        m = re.search(pat + r"[:：\s]*(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?)", head_text)
         if m:
             dt = parse_cn_date(m.group(1))
             if dt:
-                return dt
-    return parse_cn_date(url)
+                return dt, label
+    return parse_cn_date(url), "网址日期线索"
 
 
 def extract_main_text(soup: BeautifulSoup) -> str:
     selectors = [
+        "article",
         ".TRS_Editor",
         ".trs_editor",
         ".article-content",
@@ -543,7 +560,7 @@ def extract_main_text(soup: BeautifulSoup) -> str:
             continue
         if len(text) > len(best):
             best = text
-        if len(best) > 300:
+        if best and (selector in {"article", ".TRS_Editor", ".trs_editor", ".article-content", ".article_content", "#article"} or len(best) > 300):
             break
     return best
 

@@ -194,6 +194,7 @@ class NegotiationTests(unittest.TestCase):
 
     def test_authentication_balance_and_permissions_fail_once_without_exposing_server_text(self):
         for status in (401, 402, 403):
+            self.classifier = LLMClassifier(cache_enabled=False)
             self.post.reset_mock()
             self.post.return_value = response({"error": {"message": "fixture-key private data"}}, status)
             result = self.classifier.classify_article({})
@@ -225,6 +226,8 @@ class NegotiationTests(unittest.TestCase):
             self.assertFalse(classifier.classify_article({})["call_succeeded"])
             self.assertFalse(path.exists())
             self.post.return_value = chat()
+            self.assertTrue(classifier.classify_article({})["deferred"])
+            classifier = LLMClassifier(path)  # New task / model-only retry resets the 401 latch.
             self.assertTrue(classifier.classify_article({})["call_succeeded"])
             self.assertTrue(classifier.classify_article({})["from_cache"])
             self.assertEqual(self.post.call_count, 2)

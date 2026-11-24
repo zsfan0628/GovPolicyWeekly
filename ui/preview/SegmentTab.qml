@@ -1,3 +1,4 @@
+import "Pearl.js" as Pearl
 import QtQuick
 import QtQuick.Controls
 
@@ -8,12 +9,12 @@ TabButton {
     topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0
     background: Rectangle {
         radius: 5
-        color: control.checked ? "#ffffff" : control.hovered ? "#f0f5f1" : "transparent"
+        color: control.checked ? "#ffffff" : control.hovered ? Pearl.soft : "transparent"
         border.width: control.checked || control.activeFocus ? 1 : 0
-        border.color: control.activeFocus ? "#6194c2" : "#c9ddd0"
+        border.color: control.activeFocus ? Pearl.accent : Pearl.line
     }
     contentItem: Text {
-        text: control.text; font.pixelSize: 12; color: "#385a49"
+        text: control.text; font.pixelSize: 12; color: Pearl.active
         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
     }
 }

@@ -1,3 +1,4 @@
+import "Pearl.js" as Pearl
 import QtQuick
 
 Item {
@@ -23,7 +24,7 @@ Item {
     }
     Rectangle {
         anchors.fill: parent; radius: glass.radius
-        color: "#f3f7f4"
+        color: Pearl.paper
         visible: glass.reducedTransparency || !glass.texture
         border.width: 1; border.color: "#ffffff"
     }

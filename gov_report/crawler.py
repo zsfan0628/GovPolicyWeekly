@@ -8,7 +8,7 @@ import threading
 import time
 import traceback
 from collections import deque
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
@@ -24,9 +24,9 @@ from .date_utils import fmt_date, in_range
 from .http import HttpClient, sanitize_filename
 from .metrics import RunMetrics
 from .pagination import DateWindow
-from .parser import (Article, LinkItem, is_attachment_url, discover_channel_urls, extract_article, extract_links,
+from .parser import (Article, LinkItem, is_attachment_url, has_document_headline, discover_channel_urls, extract_article, extract_links,
                      extract_pagination_urls, is_probably_article_url, clean_text, navigation_soup)
-from .scope import channel_allowed, core_urls
+from .scope import channel_allowed, column_name, core_urls
 
 
 class GovCrawler:
@@ -51,9 +51,11 @@ class GovCrawler:
         cache_dir: str | Path | None = None,
         use_cache: bool = True,
         task_state=None,
+        verify_dates: bool = False,
     ) -> None:
         self.sources = sources
         self.task_state = task_state
+        self.verify_dates = verify_dates
         self.keywords = keywords
         self.output_dir = Path(output_dir)
         self.attachments_dir = self.output_dir / "attachments"
@@ -66,6 +68,7 @@ class GovCrawler:
         self.logs: list[str] = []
         self.rejected: list[dict] = []
         self._skipped_attachments = set()
+        self._memory_checkpoints = {}
         self.llm = LLMClassifier(enabled=use_llm, cache_enabled=use_cache)
         self.allow_rule_fallback = allow_rule_fallback
         self.llm_used_count = 0
@@ -81,7 +84,8 @@ class GovCrawler:
                                     verify_ssl=verify_ssl, strict=strict, save_rejected=save_rejected,
                                     use_llm=use_llm, browser_fallback=browser_fallback,
                                     allow_rule_fallback=allow_rule_fallback, max_workers=1,
-                                    full_scan=full_scan, cache_dir=self.cache_dir, use_cache=use_cache)
+                                    full_scan=full_scan, cache_dir=self.cache_dir, use_cache=use_cache,
+                                    verify_dates=verify_dates)
         self._lock = threading.RLock()
         self._llm_semaphore = threading.Semaphore(2)
         self.metrics = RunMetrics()
@@ -140,7 +144,7 @@ class GovCrawler:
                 summary = next((s for s in self.task_state.summary()["sources"] if s["name"] == name), {})
                 if summary.get("status") == "complete":
                     self.log(f"恢复任务：复用已完成站点 {name}")
-                    self.progress("source_finished", source=name, index=idx, total=total)
+                    self.progress("source_finished", source=name, index=idx, total=total, reused=True)
                     return self.task_state.records(name)
                 self.task_state.put("source", name, "state", {"finished": False})
             self.progress("source_started", source=source.get("name", ""), index=idx, total=total)
@@ -214,8 +218,10 @@ class GovCrawler:
         discovered = 0
         list_count = 0
         date_windows = {}
-        records: list[dict] = []
-        processed = set()
+        noted_columns = set(channel_names)
+        self._memory_checkpoints.clear()
+        evidence = {}
+        records_by_key = {}
         fetched = 0
         while pending:
             list_url, is_pagination, chain_key = pending.popleft()
@@ -236,29 +242,33 @@ class GovCrawler:
                         html, final_url = self.client.fetch_text(list_url)
                 self.progress("page_processed", source=name, kind="list")
                 final_key = normalize_url_for_dedupe(final_url)
+                redirected_home = key != final_key and final_key == normalize_url_for_dedupe(source['base_url'])
                 if final_key != key and final_key in visited:
                     if self.task_state:
-                        self.task_state.put("page_html", name, list_url, dict(html=html, final_url=final_url))
-                        self.task_state.put("page", name, list_url, dict(status="complete", column=column, stop="重定向到已检查页面"))
+                        target = self.task_state.get("page", name, final_url) or {}
+                        self.task_state.put("page", name, list_url, dict(status="complete" if target.get("status") == "complete" and not redirected_home else "empty",
+                                            column=column, reason="入口重定向到 " + final_url, stop="重定向到已检查页面"))
                     continue
                 visited.add(final_key)
                 soup = navigation_soup(html)
                 links = extract_links(html, final_url, only_same_site=True, _soup=soup)
                 if self.task_state:
                     self.task_state.put("page_html", name, list_url, dict(html=html, final_url=final_url))
-                    self.task_state.put("page", name, list_url, dict(status="complete" if links else "empty",
-                                        column=column,
-                                        reason="" if links else "页面可访问但没有提取到链接，需核查"))
                 # 把列表页URL写入候选上下文，便于判断“是否来自政策栏目”。
                 for link in links:
                     link.context = f"{link.context} 栏目:{channel_names.get(list_url, '')} 列表页:{list_url} 最终列表页:{final_url}"
                 list_count += 1
                 self.log(f"列表页 {list_url} 提取链接 {len(links)} 条")
                 channels = discover_channel_urls(html, final_url, max_channels=0, _links=links)
+                labels = {x.url: x.title for x in links}
                 navigation_keys.update(normalize_url_for_dedupe(url) for url in channels)
                 for channel in channels:
-                    label = next((x.title for x in links if x.url == channel), "")
+                    label = labels.get(channel, "")
                     if not channel_allowed(source, channel, label, self.full_scan):
+                        if (self.task_state and channel not in noted_columns and
+                                column_name(label) in scope.get("column_names", [])):
+                            self.task_state.put("column_review", name, channel, dict(label=label, parent=list_url))
+                            noted_columns.add(channel)
                         continue
                     channel_key = normalize_url_for_dedupe(channel)
                     if channel_key in queued or channel_key in visited:
@@ -268,7 +278,7 @@ class GovCrawler:
                         break
                     queued.add(channel_key)
                     pending.append((channel, False, channel_key))
-                    channel_names[channel] = next((x.title for x in links if x.url == channel), "")
+                    channel_names[channel] = label
                     discovered += 1
                     self.log(f"发现子栏目: {channel}")
 
@@ -283,6 +293,26 @@ class GovCrawler:
                     and not x.in_navigation
                     and self.should_fetch_candidate(x)
                 ]
+                if self.task_state:
+                    discovered_urls = set(channels)
+                    directory = any(not link.in_navigation and normalize_url_for_dedupe(link.url) != key and link.url in discovered_urls and
+                                    channel_allowed(source, link.url, link.title, self.full_scan) for link in links)
+                    empty_text = {"暂无数据", "暂无记录", "暂无相关信息", "没有相关记录"}
+                    explicit_empty = soup.get_text(strip=True) in empty_text or any(
+                        node.get_text(strip=True) in empty_text for node in soup.select(
+                            "main .empty, article .empty, .list-empty, .no-data, .no-record, [data-list-empty]"))
+                    outside_period = content_items and all(x.date_reliable and x.publish_date and
+                                                           not in_range(x.publish_date, start, end) for x in content_items)
+                    outcome = ("入口跳转到首页，栏目需核查" if redirected_home else
+                               "候选列表日期均在本期之外" if outside_period else
+                               "已识别文章候选" if content_items else "已识别栏目目录" if directory else
+                               "官网标注暂无记录" if explicit_empty else "仅识别分页入口" if next_urls else
+                               "识别到附件但未识别文章，详见附件候选清单" if any(is_attachment_url(x.url) for x in links) else
+                               "未识别文章或有效子栏目，需核查")
+                    checked = not redirected_home and bool(content_items or directory or explicit_empty)
+                    self.task_state.put("page", name, list_url, dict(status="complete" if checked else "empty",
+                                        column=column, outcome=outcome, reason="" if checked else outcome,
+                                        links=len(links), candidates=len(content_items)))
                 content_urls = sorted({x.url for x in content_items})
                 fingerprint = hashlib.sha256("\n".join(content_urls).encode()).hexdigest() if content_urls else ""
                 fingerprints = page_fingerprints.setdefault(chain_key, set())
@@ -302,16 +332,35 @@ class GovCrawler:
                 # Process each page immediately; out-of-range history never waits for all columns.
                 for item in content_items:
                     item_key = normalize_url_for_dedupe(item.url)
-                    if item_key in processed:
+                    prior = evidence.get(item_key)
+                    if prior is None:
+                        prior = evidence[item_key] = dict(url=item.url, contexts={}, dates=set(), titles=set())
+                    date = item.publish_date if item.date_reliable else None
+                    changed = column not in prior["contexts"] or (date and date not in prior["dates"]) or item.title not in prior["titles"]
+                    if not changed:
                         continue
-                    processed.add(item_key)
+                    repeated_item = bool(prior["titles"])
+                    prior["contexts"].setdefault(column, item.context)
+                    prior["titles"].add(item.title)
+                    if date:
+                        prior["dates"].add(date)
+                    item = replace(item, url=prior["url"])  # Keep original list dates for pagination checks.
+                    item.title = max(prior["titles"], key=lambda t: (len(t), t))
+                    item.context = " ".join(sorted(prior["contexts"].values()))
+                    if prior["dates"]:
+                        item.date_reliable = len(prior["dates"]) == 1
+                        item.list_date_conflict = not item.date_reliable
+                        item.publish_date = next(iter(prior["dates"])) if item.date_reliable else None
                     if self.max_detail_per_source > 0 and fetched >= self.max_detail_per_source:
                         self._scope_limited = True
                         break
-                    record, count = self.process_candidate(source, item, start, end, column)
+                    record, count = self.process_candidate(source, item, start, end, "、".join(sorted(filter(None, prior["contexts"]))),
+                                                           reconsider=repeated_item)
                     fetched += count
                     if record:
-                        records.append(record)
+                        records_by_key[item_key] = record
+                    else:
+                        records_by_key.pop(item_key, None)
 
                 window = date_windows.setdefault(chain_key, DateWindow(
                     enabled=bool(scope.get("date_stop")),
@@ -322,6 +371,8 @@ class GovCrawler:
                     self.log(f"日期窗口已结束，停止历史翻页: {final_url}")
                     self.progress("pagination_stopped", source=name, url=final_url, reason="date_window")
                     continue
+                if window.reason:
+                    self._page_stop(name, list_url, window.reason)
                 for next_url in next_urls:
                     next_key = normalize_url_for_dedupe(next_url)
                     if next_key not in queued and next_key not in visited:
@@ -330,14 +381,17 @@ class GovCrawler:
                         channel_names[next_url] = channel_names.get(list_url, "")
                         self.log(f"发现下一页: {next_url}")
             except Exception as e:
+                details = failure_details(e)
                 if self.task_state:
                     self.task_state.put("page", name, list_url, {"status": "failed", "column": column,
-                                                               **failure_details(e)})
-                self.progress("error", source=name, kind="list")
+                                                               **details})
+                self.progress("error", source=name, kind="list", url=list_url,
+                              failure_kind=details["failure_kind"])
                 self.log(f"列表页失败: {list_url} | {e}")
 
         self.log(f"栏目遍历完成：发现 {discovered} 个子栏目，读取 {list_count} 个列表/分页页面")
 
+        records = list(records_by_key.values())
         self.log(f"{name} 命中 {len(records)} 条，详情抓取 {fetched} 条")
         return records
 
@@ -347,7 +401,7 @@ class GovCrawler:
             self.task_state.put("page", name, url, {**page, "stop": reason})
 
     def load_article(self, url: str, title: str, name: str, column: str = "") -> tuple[Article, bool]:
-        key = "parser-v2|" + normalize_url_for_dedupe(url)
+        key = "parser-v3|" + normalize_url_for_dedupe(url)
         with self.stage("detail", name, url, column) as stage:
             if self.cache:
                 try:
@@ -368,22 +422,33 @@ class GovCrawler:
                     self.log("正文缓存保存失败，不影响本次采集")
             return article, False
 
-    def process_candidate(self, source, item, start, end, column=""):
+    def process_candidate(self, source, item, start, end, column="", *, reconsider=False):
         name = source["name"]
         if is_attachment_url(item.url):
             self._skip_attachment(source, item, column)
             return None, 0
-        saved = self.task_state.get("candidate", name, item.url) if self.task_state else None
-        if saved and saved.get("status") in {"included", "excluded", "out_of_range", "skipped_attachment"}:
+        saved = self.task_state.get("candidate", name, item.url) if self.task_state else self._memory_checkpoints.get((name, item.url))
+        if not reconsider and saved and saved.get("status") in {"included", "excluded", "out_of_range", "skipped_attachment"}:
             return saved.get("record"), 0
         payload = dict(saved or {}, item={**asdict(item), "publish_date": item.publish_date.isoformat() if item.publish_date else None},
                        column=column, status="pending")
         def checkpoint(status, **extra):
+            if status != "included":
+                payload.pop("record", None)
+            for key in ("reason", "failure_kind", "http_status"):
+                payload.pop(key, None)
             payload.update(status=status, **extra)
             if self.task_state:
                 self.task_state.put("candidate", name, item.url, payload)
+            else:
+                self._memory_checkpoints[name, item.url] = payload
+            if status in {"detail_failed", "llm_failed"}:
+                self.progress("error", source=name, kind="llm" if status=="llm_failed" else "detail",
+                              url=item.url, failure_kind=extra.get("failure_kind", status))
+            elif status != "pending" and saved and saved.get("status") in {"detail_failed", "llm_failed"}:
+                self.progress("issue_resolved", source=name, url=item.url, kind="candidate")
         checkpoint("pending")
-        if item.date_reliable and item.publish_date and not in_range(item.publish_date, start, end):
+        if not reconsider and not self.verify_dates and item.date_reliable and item.publish_date and not in_range(item.publish_date, start, end):
             checkpoint("out_of_range")
             return None, 0
         if looks_like_project_eia_publicity(item.title, "", url=item.url):
@@ -392,7 +457,7 @@ class GovCrawler:
             return None, 0
         fetched = 0
         try:
-            if saved and saved.get("article") and saved.get("status") in {"pending", "llm_failed"}:
+            if saved and saved.get("article") and (reconsider or saved.get("status") in {"pending", "llm_failed"}):
                 data = dict(saved["article"])
                 data["publish_date"] = datetime.fromisoformat(data["publish_date"]) if data["publish_date"] else None
                 article, cached = Article(**data), True
@@ -400,16 +465,33 @@ class GovCrawler:
                 article, cached = self.load_article(item.url, item.title, name, column)
             checkpoint("pending", article={**asdict(article), "publish_date": article.publish_date.isoformat() if article.publish_date else None})
             fetched = int(not cached)
-            pub_date = article.publish_date or item.publish_date
-            if pub_date is None or not article.text.strip():
-                reason = "未识别发布日期" if pub_date is None else "未提取到正文"
-                checkpoint("detail_failed", reason=reason, failure_kind="content_unparsed")
-                self.progress("error", source=name, kind="detail")
-                self.log(f"详情页待核查: {item.url} | {reason}")
+            weak = article.date_source in {"发文日期", "更新日期", "页面日期线索", "网址日期线索"}
+            use_list = item.date_reliable and item.publish_date and (not article.publish_date or weak)
+            pub_date = item.publish_date if use_list else article.publish_date or item.publish_date
+            date_source = "列表标注日期" if use_list else article.date_source if article.publish_date else "列表日期线索"
+            weak_only = (weak or not article.publish_date) and not use_list
+            if item.list_date_conflict and (weak or not article.publish_date):
+                checkpoint("detail_failed", reason="多个栏目日期冲突，正文无明确发布日期", failure_kind="date_conflict")
                 return None, fetched
-            if not in_range(pub_date, start, end):
+            if weak_only and pub_date:
+                checkpoint("detail_failed", reason=f"仅有{date_source}（{fmt_date(pub_date)}），缺少明确发布日期，待核查", failure_kind="date_unverified")
+                return None, fetched
+            conflict = bool(item.date_reliable and item.publish_date and article.publish_date and
+                            item.publish_date.date() != article.publish_date.date())
+            if conflict and not in_range(pub_date, start, end) and in_range(item.publish_date, start, end):
+                checkpoint("detail_failed", failure_kind="date_conflict",
+                           reason=f"列表日期 {fmt_date(item.publish_date)} 与正文日期 {fmt_date(article.publish_date)} 跨统计区间，待核查")
+                return None, fetched
+            if pub_date is not None and not in_range(pub_date, start, end):
                 self.reject(source, item, article=article, reason="发布时间不在统计区间")
                 checkpoint("out_of_range")
+                return None, fetched
+            body = clean_text(article.text)
+            placeholder = body in {clean_text(article.title), "加载中", "正在加载", "请稍候", "访问受限", "页面不存在"}
+            if pub_date is None or not body or placeholder:
+                reason = "未识别发布日期" if pub_date is None else "只有标题或占位提示，未取得有效正文" if placeholder else "未提取到正文"
+                checkpoint("detail_failed", reason=reason, failure_kind="date_unverified" if pub_date is None else "content_unparsed")
+                self.log(f"详情页待核查: {item.url} | {reason}")
                 return None, fetched
             cls = classify(article.title or item.title, article.text, self.keywords, url=article.url,
                            source_name=name, strict=self.strict, context=item.context)
@@ -419,16 +501,19 @@ class GovCrawler:
                 checkpoint(decision.get("status", "excluded"), reason=decision.get("reason", ""))
                 return None, fetched
             record = self.article_to_record(source, article, pub_date, decision["cls"], llm_result=decision.get("llm_result"))
+            record.update(date_source=date_source, date_conflict=conflict or item.list_date_conflict,
+                          article_date=fmt_date(article.publish_date), list_date=fmt_date(item.publish_date))
             checkpoint("included", record=record)
             self.progress("record_included", source=name)
             self.log(f"命中: {fmt_date(pub_date)} | {record['category']} | {record['title']} | {record['url']} | 判定:{record.get('decision_source','')}")
             return record, fetched
         except NonHtmlContent:
             self._skip_attachment(source, item, column)
+            if saved and saved.get("status") in {"detail_failed", "llm_failed"}:
+                self.progress("issue_resolved", source=name, url=item.url, kind="candidate")
             return None, fetched
         except Exception as error:
             checkpoint("detail_failed", **failure_details(error))
-            self.progress("error", source=name, kind="detail")
             self.log(f"详情页失败: {item.url} | {error}")
             return None, fetched
 
@@ -462,11 +547,13 @@ class GovCrawler:
     def should_fetch_candidate(self, item: LinkItem) -> bool:
         if re.sub(r"\s+", "", item.title) in {
             "政府信息公开指南", "政府信息公开制度", "政府信息公开年报", "政府信息公开年度报告",
-            "依申请公开", "网站地图", "隐私声明", "联系我们",
+            "依申请公开", "网站地图", "隐私声明", "联系我们", "政府网站工作年度报表",
         }:
             return False
         if is_attachment_url(item.url):
             return False
+        if has_document_headline(item):
+            return True
         title_context = f"{item.title} {item.context} {item.url}"
         strong_title_hit = contains_any(
             title_context,
@@ -531,7 +618,7 @@ class GovCrawler:
         if bucket == "reject":
             return {"include": False, "cls": cls, "reason": reason}
 
-        # 模糊候选：调用 GPT-5.5。默认不再“规则兜底通过”，避免半信半疑的内容进入报告。
+        # 模糊候选由当前模型复判，认证失败不当作语义排除。
         # 如确实需要旧行为，可在 main.py 中启用 --allow-rule-fallback。
         if not self.llm.is_available():
             if self.allow_rule_fallback and cls.get("is_relevant"):
@@ -568,16 +655,17 @@ class GovCrawler:
         with self._llm_semaphore, self.stage("llm", source.get("name", ""), article.url) as stage:
             llm_result = self.llm.classify_article(llm_input)
             stage["cache_hit"] = bool(llm_result.get("from_cache"))
+            stage["deferred"] = bool(llm_result.get("deferred"))
             if llm_result.get("call_succeeded") is False or str(llm_result.get("reason", "")).startswith("LLM调用失败"):
-                stage["error"] = True
-                self.progress("error", source=source.get("name", ""), kind="llm")
+                stage["error"] = not stage["deferred"]
         self.llm_used_count += 1
         if llm_result.get("from_cache"):
             self.llm_cache_hit_count += 1
 
         if llm_result.get("call_succeeded") is False or str(llm_result.get("reason", "")).startswith("LLM调用失败"):
             reason = "模型调用失败（未完成复判，暂不收录）：" + str(llm_result.get("reason", ""))
-            self.log(f"模型调用失败: {article.title} | {reason}")
+            if not llm_result.get("deferred"):
+                self.log(f"模型调用失败: {article.title} | {reason}")
             return {"include": False, "cls": cls, "llm_result": llm_result,
                     "status": "llm_failed", "reason": reason}
 
@@ -652,7 +740,7 @@ class GovCrawler:
             return "reject", "无正式政策/企业相关/任免信号，直接排除"
 
         # 像正式文件但相关性不足，或者相关但不像正式文件，交给 GPT 判断。
-        return "ambiguous", "规则判断为模糊候选，交给 GPT-5.5 复判"
+        return "ambiguous", "规则判断为模糊候选，交给所选模型复判"
 
     def cls_from_llm(self, rule_cls: dict, llm_result: dict) -> dict:
         categories = []
@@ -690,7 +778,18 @@ class GovCrawler:
             for att in article.attachments:
                 attachment_infos.append({"name": att.get("name", "附件"), "url": att.get("url", ""), "local_path": ""})
 
-        text_hash = hashlib.sha1(clean_text(article.text[:5000]).encode("utf-8", errors="ignore")).hexdigest()
+        text_hash = hashlib.sha1(clean_text(article.text).encode("utf-8", errors="ignore")).hexdigest()
+        excerpt = next((s.strip() for s in re.split(r"[。\n]", article.text)
+                        if len(s.strip()) >= 12 and any(term in s for term in
+                           ("拟任", "任命", "免去", "免职", "任前公示", "自发布", "废止", "施行", "申报", "现印发"))), "")
+        personnel_stage = ""
+        if "人事任免" in cls.get("categories", []):
+            if re.search(r"任前|拟任|人选公示|拟提拔", title):
+                personnel_stage = "拟任／公示，不等于已任命"
+            elif re.search(r"任免通知|职务任免|任命|免职", title):
+                personnel_stage = "任免文件，以原文决定为准"
+            else:
+                personnel_stage = "任免阶段待核对"
         return {
             "title": title,
             "url": article.url,
@@ -708,6 +807,12 @@ class GovCrawler:
             "change_hits": "、".join(cls.get("change_hits") or []),
             "content_hash": text_hash,
             "attachments": attachment_infos,
+            "attachment_note": "正文提示详见附件，附件内容未解析" if attachment_infos and re.search(r"详见附件|见附件|见附表|名单附后", article.text) else "",
+            "source_excerpt": excerpt[:240] + ("…" if len(excerpt) > 240 else ""),
+            "model_body_excerpted": bool(llm_result and llm_result.get("body_excerpted")),
+            "personnel_stage": personnel_stage,
+            "industry_relevance": ((llm_result or {}).get("relevance_to_pesticide_chemical_enterprise") or
+                                   ("规则识别到企业相关线索" if cls.get("business_related") else "未单独确认")),
             "decision_source": cls.get("decision_source", "规则命中"),
             "rule_reason": cls.get("rule_reason", ""),
             "policy_subtype": cls.get("policy_subtype", ""),
@@ -771,7 +876,8 @@ class GovCrawler:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         summary = f"LLM调用候选数：{self.llm_used_count}，其中缓存命中：{self.llm_cache_hit_count}"
         statistics = self.llm_statistics()
-        summary += f"；成功复判：{statistics['success_count']}，调用失败：{statistics['failure_count']}"
+        summary += (f"；成功复判：{statistics['success_count']}，调用失败：{statistics['failure_count']}，"
+                    f"暂停待复判：{statistics['deferred_count']}；模型生成 HTTP 请求：{statistics['http_request_count']}")
         (self.output_dir / "crawl_log.txt").write_text("\n".join([*self.logs, summary]), encoding="utf-8")
         if self.save_rejected:
             rejected = self.rejected
@@ -789,9 +895,11 @@ class GovCrawler:
     def llm_statistics(self) -> dict:
         stage = self.metrics.snapshot().get("llm", {})
         failures = stage.get("errors", 0)
+        deferred = stage.get("deferred", 0)
         return {"candidate_count": self.llm_used_count,
-                "success_count": max(0, self.llm_used_count - failures),
-                "failure_count": failures, "cache_hit_count": self.llm_cache_hit_count}
+                "success_count": max(0, self.llm_used_count - failures - deferred), "deferred_count": deferred,
+                "failure_count": failures, "cache_hit_count": self.llm_cache_hit_count,
+                "http_request_count": self.llm.http_requests}
 
 
 def unique_keep_order(items: Iterable[str]) -> list[str]:
@@ -821,12 +929,11 @@ def dedupe_records(records: Iterable[dict]) -> list[dict]:
     out = []
     for r in records:
         title_key = normalize_title(r.get("title", ""))
-        keys = [
-            ("url", r.get("normalized_url") or normalize_url_for_dedupe(r.get("url", ""))),
-            ("title", r.get("source_name", ""), r.get("publish_date", ""), title_key),
-        ]
+        url = r.get("normalized_url") or normalize_url_for_dedupe(r.get("url", ""))
+        keys = [("url", url)] if url else []
         if r.get("content_hash"):
-            keys.append(("hash", r.get("source_name", ""), r.get("publish_date", ""), r.get("content_hash")))
+            keys.append(("hash", r.get("source_name", ""), r.get("publish_date", ""), title_key, r.get("content_hash"),
+                         tuple(sorted(a.get("url", "") for a in r.get("attachments", [])))))
         if any(k in seen for k in keys):
             continue
         for k in keys:
@@ -854,7 +961,20 @@ def normalize_title(title: str) -> str:
     title = clean_text(title)
     title = re.sub(r"[\s\u3000]+", "", title)
     title = re.sub(r"[【】\[\]（）()《》“”‘’、，。；：:|｜_-]", "", title)
-    return title[:80]
+    return title
+
+
+def mark_same_text_sources(records):
+    """Preserve separately issued records; do not guess which issuer is authoritative."""
+    groups = {}
+    for record in records:
+        if record.get("content_hash") and record.get("title"):
+            groups.setdefault((normalize_title(record["title"]), record["content_hash"]), []).append(record)
+    for group in groups.values():
+        names = sorted({r.get("source_name", "") for r in group} - {""})
+        if len(names) > 1:
+            for r in group:
+                r["same_text_sources"] = [n for n in names if n != r.get("source_name")]
 
 
 def read_manual_urls(path: str | Path) -> list[str]:

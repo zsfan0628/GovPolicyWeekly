@@ -87,6 +87,18 @@ class ControllerTests(unittest.TestCase):
         self.controller.shutdown()
         self.temporary.cleanup()
 
+    def test_latest_weekly_report_uses_period_not_pdf_mtime_or_attachment(self):
+        reports = self.controller.reports
+        self.assertEqual(self.controller.latestReport, {})
+        def row(start,end,folder):
+            name = f"政策周报_{start}_至_{end}"
+            return dict(reportName=name, reportPath=str(self.root/folder/(name+".pdf")))
+        old = row("2026-10-01","2026-10-07","old")
+        new = row("2026-11-16","2026-11-22","latest")
+        unrelated = row("2026-12-01","2026-12-07","attachments")
+        reports.replace([unrelated,old,new])
+        self.assertEqual(self.controller.latestReport, dict(start="2026-11-16",end="2026-11-22",path=new["reportPath"]))
+
     def test_missing_key_dates_sources_and_bad_interval_cannot_launch(self):
         controller = self.controller
         with patch("gov_report.desktop.subprocess.Popen") as popen:
@@ -102,6 +114,47 @@ class ControllerTests(unittest.TestCase):
         self.controller.saveConfig({"openai_api_key": "private-local-key"})
         self.controller.add_log("ERROR", "server echoed private-local-key")
         self.assertNotIn("private-local-key", self.controller.logs.rows[-1]["message"])
+
+    def test_activity_groups_events_by_site_and_preserves_warning_outcomes(self):
+        c = self.controller
+        for name in ("甲站","乙站"):
+            c._progress(dict(event="source_started",source=name))
+        for _ in range(12):
+            c._progress(dict(event="record_included",source="甲站"))
+            c._progress(dict(event="page_processed",kind="detail"))
+        c._progress(dict(event="error",source="乙站",kind="list"))
+        c._progress(dict(event="coverage",summary={"sources":[{"name":"乙站","status":"failed","counts":{}}]}))
+        for name in ("甲站","乙站"):
+            c._progress(dict(event="source_finished",source=name))
+        self.assertEqual(c.activity.rowCount(),2)
+        first, second = c.activity.rows
+        self.assertEqual((first["eventTitle"],first["eventDetail"]),("甲站","已检查 · 收录 12 条"))
+        self.assertEqual((second["eventKind"],second["eventAction"]),("warning","coverage"))
+        self.assertIn("采集失败",second["eventDetail"])
+        c.add_log("ERROR","任意原始输出")
+        self.assertEqual(c.activity.rowCount(),2)
+
+    def test_resumed_site_and_interrupted_activity(self):
+        c = self.controller
+        c._progress(dict(event="source_finished",source="上次站点",reused=True))
+        self.assertIn("沿用",c.activity.rows[0]["eventDetail"])
+        c._progress(dict(event="source_started",source="新站点"))
+        c.activity.interrupt("本次检查已停止")
+        self.assertEqual([r["eventKind"] for r in c.activity.rows],["done","paused"])
+        c.activity.clear()
+        self.assertFalse(c.activity.index_by_key)
+
+    def test_same_page_across_columns_is_one_live_warning_and_can_recover(self):
+        c = self.controller
+        c._progress(dict(event="source_started",source="甲站"))
+        for _ in range(6):
+            c._progress(dict(event="error",source="甲站",kind="detail",url="https://example.gov.cn/a",failure_kind="date_unverified"))
+        self.assertEqual(c._errors,1)
+        self.assertEqual(c.activity.rows[0]["eventDetail"],"仍在采集 · 发布日期不明确 × 1")
+        c._progress(dict(event="error",source="甲站",kind="list",url="https://example.gov.cn/b",failure_kind="timeout"))
+        c._progress(dict(event="issue_resolved",source="甲站",url="https://example.gov.cn/a"))
+        self.assertEqual(c._errors,1)
+        self.assertEqual(c.activity.rows[0]["eventDetail"],"仍在采集 · 请求超时 × 1")
 
     def test_attachments_start_disabled_even_if_enabled_in_the_last_session(self):
         self.assertFalse(self.controller.config["download_attachments"])

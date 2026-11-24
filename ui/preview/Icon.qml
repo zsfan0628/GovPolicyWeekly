@@ -1,8 +1,9 @@
+import "Pearl.js" as Pearl
 import QtQuick
 
 Item {
     property string name: "file-text"
-    property color tint: "#728477"
+    property color tint: Pearl.muted
     implicitWidth: 18
     implicitHeight: 18
     width: 18

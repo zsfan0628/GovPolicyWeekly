@@ -286,9 +286,23 @@ class Layout:
         summary = clean_excerpt(r.get('summary'), r.get('title')) or '未提取到可独立阅读的摘要，请查看原文。'
         body = self.box(self.p('<b>内容摘要</b><br/>' + safe_text(summary), raw=True))
         parts = [header, Spacer(1, 8), body, Spacer(1, 7)]
+        notes = [r.get('personnel_stage'), r.get('attachment_note')]
+        relevance = r.get('industry_relevance')
+        if relevance:
+            notes.append('企业相关性：' + {'high':'高','medium':'中','low':'低','none':'无'}.get(relevance, relevance))
+        if str(r.get('date_uncertain')).lower() == 'true' or str(r.get('date_conflict')).lower() == 'true':
+            notes.append('日期待核对，采用：' + str(r.get('date_source') or '未注明'))
+        if any(notes):
+            parts.append(self.p('；'.join(str(note) for note in notes if note), 'small'))
+        if r.get('same_text_sources'):
+            parts.append(self.p('其他发布单位（同题同文，未认定原发）：' + '、'.join(r['same_text_sources']), 'small'))
+        if str(r.get('model_body_excerpted')).lower() == 'true':
+            parts.append(self.p('模型输入为正文首尾节选，不含被省略的中段。', 'small'))
+        if r.get('source_excerpt'):
+            parts.append(self.p('原文摘录：' + r['source_excerpt'], 'small'))
         points = clean_excerpt(r.get('change_points'), r.get('title'))
         if points:
-            parts += [Subheading('变动 / 调整提示（自动提取）', accent), self.p(points), Spacer(1, 5)]
+            parts += [Subheading('变动 / 调整提示（据本文，未比对旧版）', accent), self.p(points), Spacer(1, 5)]
         attachments = r.get('attachments') or []
         if attachments:
             parts.append(Subheading('附件', accent))

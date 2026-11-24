@@ -17,6 +17,21 @@ class ModelCallError(RuntimeError):
         self.retryable = retryable
 
 
+def access_diagnostic(response):
+    status = response.status_code
+    hint = {401: "身份认证失败，请核对服务地址与密钥是否配套，密钥无需 Bearer 前缀",
+            402: "服务要求付费，请检查该项目余额或计费状态",
+            403: "服务拒绝访问，请核对项目权限和服务可用地区"}[status]
+    try:
+        code = response.json()["error"]["code"]
+    except (KeyError, TypeError, ValueError):
+        code = None
+    # Never echo arbitrary upstream messages, which can contain the supplied key.
+    if code in ("invalid_api_key", "insufficient_permissions", "unsupported_country_region_territory", "insufficient_quota"):
+        hint += f"（{code}）"
+    return f"HTTP {status}：{hint}"
+
+
 def api_bases(value: str) -> list[str]:
     parts = urlsplit(value.strip())
     if parts.scheme not in {"http", "https"} or not parts.netloc or parts.username or parts.password or parts.query or parts.fragment:
@@ -166,7 +181,7 @@ def decode_response(response, schema: dict) -> dict:
     raw = response.text.lstrip("\ufeff \r\n\t")
     meta = f"HTTP {status}，响应类型 {mime or '未声明'}"
     if status in {401, 402, 403}:
-        raise ModelCallError(f"{meta}；请检查密钥、余额或所选模型的生成权限", kind="authorization")
+        raise ModelCallError(access_diagnostic(response), kind="authentication" if status == 401 else "authorization")
     if status == 429 or status >= 500:
         raise ModelCallError(f"{meta}；接口限流或服务暂时异常", kind="transient", retryable=True)
     if status in {404, 405} or 300 <= status < 400:

@@ -1,3 +1,4 @@
+import "Pearl.js" as Pearl
 import QtQuick
 
 Item {
@@ -22,21 +23,21 @@ Item {
     readonly property real bottomInset: height - 1 - (content.y + content.baselineOffset + inkBottom)
     readonly property string severityColor: level === "ERROR" ? "#b44747"
         : level === "WARN" || level === "STOP" ? "#98652f"
-        : level === "READY" || level === "DONE" ? "#267451" : "#65717c"
+        : level === "READY" || level === "DONE" ? Pearl.accent : Pearl.muted
     // Center the visible glyph area, including fallback CJK fonts, above the divider.
     height: Math.ceil(Math.max(27, inkHeight + 12)) + 1
     FontMetrics { id: messageMetrics; font: content.font }
     FontMetrics { id: timeMetrics; font: timestamp.font }
     FontMetrics { id: levelMetrics; font: severity.font }
-    Rectangle { anchors.fill: parent; color: hovered.hovered ? "#edf2f5" : "transparent" }
+    Rectangle { anchors.fill: parent; color: hovered.hovered ? Pearl.soft : "transparent" }
     HoverHandler { id: hovered }
     Text {
         id: timestamp; objectName: "logTimestamp"
         x: 0; width: 70
         anchors.baseline: content.baseline
         text: row.logTime; textFormat: Text.PlainText
-        font.family: Qt.platform.os === "windows" ? "Consolas" : "Menlo"
-        font.pixelSize: 11; color: "#7b8792"
+        font.features: ({ "tnum": 1 })
+        font.pixelSize: 11; color: Pearl.muted
         elide: Text.ElideRight
     }
     Text {
@@ -44,7 +45,6 @@ Item {
         x: 82; width: 56
         anchors.baseline: content.baseline
         text: row.level; textFormat: Text.PlainText
-        font.family: Qt.platform.os === "windows" ? "Consolas" : "Menlo"
         font.pixelSize: 11; color: row.severityColor
         elide: Text.ElideRight
     }
@@ -53,9 +53,9 @@ Item {
         x: 150; width: Math.max(1, row.width - x - 8)
         y: (row.height - 1 - row.inkHeight) / 2 - row.inkTop - baselineOffset
         text: row.message; textFormat: Text.PlainText
-        font.pixelSize: 11; color: row.level === "ERROR" ? "#a33c3c" : "#3f4b56"
+        font.pixelSize: 11; color: row.level === "ERROR" ? "#a33c3c" : Pearl.ink
         wrapMode: Text.WrapAnywhere
         lineHeightMode: Text.FixedHeight; lineHeight: 17
     }
-    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#f0f3f5" }
+    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Pearl.soft }
 }

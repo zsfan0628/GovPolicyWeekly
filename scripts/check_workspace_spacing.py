@@ -1,6 +1,6 @@
 """Geometry checks for the live QML workspace, without network requests."""
 
-from PySide6.QtCore import QObject, QPointF
+from PySide6.QtCore import QObject, QPointF, Qt
 from PySide6.QtTest import QTest
 
 
@@ -9,6 +9,12 @@ def reveal_config_item(window, item):
     content = window.findChild(QObject, 'configContent')
     ancestor = item
     while ancestor and ancestor is not content:
+        if ancestor.objectName() in ('modelDrawer','advancedDrawer') and not ancestor.isVisible():
+            heading = window.findChild(QObject, ancestor.objectName().replace('Drawer','Heading'))
+            reveal_config_item(window, heading)
+            QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier,
+                             heading.mapToScene(QPointF(heading.width()/2, heading.height()/2)).toPoint())
+            QTest.qWait(120)
         ancestor = ancestor.parentItem()
     if ancestor is None:
         return
@@ -37,40 +43,32 @@ def check_workspace_spacing(window, artifacts):
 
     original_size = window.width(), window.height()
     scroll = item('configScroll').property('contentItem')
-    original_y = scroll.property('contentY')
     for width, height in ((1020, 740), (1280, 900), (1440, 960)):
         window.setWidth(width)
         window.setHeight(height)
+        window.setProperty('drawer', '')
         scroll.setProperty('contentY', 0)
-        QTest.qWait(300)
-        content = item('configContent')
-        rows = sorted((row for row in content.childItems() if row.isVisible() and row.height() > 0),
-                      key=lambda row: row.y())
-        for previous, following in zip(rows, rows[1:]):
-            gap = following.y() - previous.y() - previous.height()
-            assert gap >= 11.5, (width, previous.objectName(), following.objectName(), gap)
-        for section, controls in (
-            ('dateSection', ('recent7Days', 'recent30Days')),
-            ('runtimeSection', ('requestInterval',)),
-        ):
-            bounds = rect(item(section))
-            for name in controls:
-                control = rect(item(name))
-                assert control[1] >= bounds[1] - 0.5 and control[3] <= bounds[3] + 0.5, (section, name, bounds, control)
-        for above, below in (('recent30Days', 'endDate'), ('requestInterval', 'verifySsl')):
-            assert rect(item(below))[1] - rect(item(above))[3] >= 11.5, (width, above, below)
-        for top, bottom in (('attachments', 'browserFallback'), ('verifySsl', 'strictMode')):
-            assert rect(item(bottom))[1] - rect(item(top))[3] >= 7.5
-        for name in ('startDate', 'endDate', 'apiUrl', 'apiKey', 'requestInterval', 'ruleFallback'):
-            bounds = rect(item(name))
-            container = rect(content)
-            assert bounds[0] >= container[0] - 0.5 and bounds[2] <= container[2] + 0.5, (width, name)
+        QTest.qWait(180)
+        arc, first, last = (item(n) for n in ('horizonCalendar','startDate','endDate'))
+        assert arc.property('valid') and arc.property('days') >= 1
+        assert rect(arc)[3] <= rect(first)[1] and rect(first)[2] < rect(last)[0]
+        assert rect(item('dateSection'))[3] <= rect(first)[1] - 8
+        for a,b in [('sitePicker','modelHeading'),('modelHeading','advancedHeading')]:
+            assert rect(item(b))[1] >= rect(item(a))[3]+8
+        assert rect(item('modelHeading'))[0] >= rect(last)[2]+12
+        assert not item('advancedDrawer').isVisible() and not item('modelDrawer').isVisible()
         window.grabWindow().save(str(artifacts / f'spacing-{width}-top.png'))
-        reveal_config_item(window, item('ruleFallback'))
+        for name in ('apiUrl','apiKey','requestInterval','ruleFallback'):
+            box = item(name)
+            reveal_config_item(window, box)
+            left, top, right, bottom = rect(box)
+            bounds = rect(item('configScroll'))
+            assert box.isVisible() and left>=bounds[0]-1 and right<=bounds[2]+1, (name,bounds,rect(box))
+            assert top>=bounds[1]-1 and bottom<=bounds[3]+1, (name,bounds,rect(box))
+        for top,bottom in [('attachments','browserFallback'),('verifySsl','strictMode')]:
+            assert rect(item(bottom))[1] >= rect(item(top))[3]+7
         window.grabWindow().save(str(artifacts / f'spacing-{width}-settings.png'))
-        bottom = rows[-1].y() + rows[-1].height() + content.y()
-        assert scroll.property('contentHeight') >= bottom, 'Bottom of configuration is unreachable'
-    window.setWidth(original_size[0])
-    window.setHeight(original_size[1])
-    scroll.setProperty('contentY', original_y)
-    QTest.qWait(300)
+    window.setProperty('drawer','')
+    window.setWidth(original_size[0]); window.setHeight(original_size[1])
+    scroll.setProperty('contentY',0)
+    QTest.qWait(180)

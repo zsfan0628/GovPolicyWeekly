@@ -1,3 +1,4 @@
+import "Pearl.js" as Pearl
 import QtQuick
 import QtQuick.Controls
 
@@ -11,7 +12,7 @@ AbstractButton {
     background: Rectangle {
         anchors.centerIn: parent; width: 34; height: 18
         radius: 9
-        color: control.checked ? "#448b65" : "#cdd7cf"
+        color: control.checked ? Pearl.accent : Pearl.line
         border.width: control.activeFocus ? 1 : 0
         border.color: "#ffffff"
         Behavior on color { ColorAnimation { duration: 140 } }

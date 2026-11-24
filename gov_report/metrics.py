@@ -20,6 +20,8 @@ class RunMetrics:
             row["seconds"] += max(0.0, float(payload.get("seconds", 0)))
             row["errors"] += int(bool(payload.get("error")))
             row["cache_hits"] += int(bool(payload.get("cache_hit")))
+            if payload.get("deferred"):
+                row["deferred"] = row.get("deferred", 0) + 1
 
     def snapshot(self):
         with self.lock:

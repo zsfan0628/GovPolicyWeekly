@@ -1,6 +1,6 @@
 param(
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '1.0.0'
+    [string]$Version = '1.5.0'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,6 +18,13 @@ function Test-ResultFile($Path) {
 }
 
 Write-Host 'Checking report export and desktop UI before packaging'
+python -m scripts.prepare_github_source
+if ($LASTEXITCODE -ne 0) { throw 'Source privacy or packaging check failed' }
+Copy-Item 'GovPolicyWeekly_windows_source.zip' 'release\' -Force
+$revision = if ($env:GITHUB_SHA) { $env:GITHUB_SHA.Substring(0, 12) } else { 'local' }
+$build = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+@{ version=$Version; build=$build } | ConvertTo-Json | Set-Content 'config/program-build.json' -Encoding utf8
+"v$Version · $(Get-Date -Format yyyy-MM-dd) · $revision" | Set-Content -LiteralPath 'config/build-id.txt' -Encoding utf8
 python desktop_app.py --self-test release-check/source.json
 if ($LASTEXITCODE -ne 0) {
     Test-ResultFile 'release-check/source.json'
@@ -41,6 +48,7 @@ Test-ResultFile $CheckPath
 if ($process.ExitCode -ne 0) { throw 'Packaged executable check failed' }
 
 Write-Host 'Building the installer'
+'portable' | Set-Content 'dist/GovPolicyWeekly/portable.channel' -Encoding ascii
 $Iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
 if (-not (Test-Path -LiteralPath $Iscc)) {
     choco install innosetup --yes --no-progress
@@ -65,6 +73,9 @@ if (-not $install.WaitForExit(180000)) {
 if ($install.ExitCode -ne 0) { throw "Installer failed with exit code $($install.ExitCode)" }
 $InstalledExe = Join-Path $InstalledRoot 'GovPolicyWeekly.exe'
 if (-not (Test-Path -LiteralPath $InstalledExe)) { throw 'Installer did not create the executable' }
+if (-not (Test-Path (Join-Path $InstalledRoot 'installer.channel')) -or (Test-Path (Join-Path $InstalledRoot 'portable.channel'))) {
+    throw 'Incorrect update channel in the installed application'
+}
 $InstalledCheck = Join-Path $ProjectRoot 'release-check\installed.json'
 $installed = Start-Process -FilePath $InstalledExe -ArgumentList @('--self-test', "`"$InstalledCheck`"") -PassThru
 if (-not $installed.WaitForExit(120000)) {
@@ -81,11 +92,14 @@ if ($LASTEXITCODE -ne 0) { throw 'Portable archive creation failed' }
 python -m zipfile -t release/GovPolicyWeekly_windows_portable.zip
 if ($LASTEXITCODE -ne 0) { throw 'Portable archive integrity check failed' }
 
-Get-ChildItem release -File | Where-Object { $_.Extension -in @('.exe', '.zip') } |
-    Sort-Object Name | ForEach-Object {
-        $hash = Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256
-        '{0}  {1}' -f $hash.Hash.ToLowerInvariant(), $_.Name
-    } | Set-Content release/SHA256SUMS.txt -Encoding ASCII
-
+$assetInfo = @{}
+$checksums = foreach ($name in @("GovPolicyWeekly_Setup_$Version.exe", 'GovPolicyWeekly_windows_portable.zip', 'GovPolicyWeekly_windows_source.zip')) {
+    $file = Get-Item -LiteralPath (Join-Path 'release' $name)
+    $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    $assetInfo[$name] = @{ size=$file.Length; sha256=$hash }
+    '{0}  {1}' -f $hash, $name
+}
+$checksums | Set-Content release/SHA256SUMS.txt -Encoding ascii
+@{ schema=1; version=$Version; build=$build; assets=$assetInfo } | ConvertTo-Json -Depth 4 | Set-Content 'release/program-update.json' -Encoding ascii
 Write-Host 'Release files ready:'
 Get-ChildItem release -File | Select-Object Name, Length | Format-Table -AutoSize

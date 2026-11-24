@@ -44,7 +44,7 @@ void main() {
     sampled += texture(backdrop, uv + stepSize * vec2(-0.7, 0.7)).rgb * 0.06;
     float luminance = dot(sampled, vec3(0.2126, 0.7152, 0.0722));
     sampled = mix(vec3(luminance), sampled, 0.78);
-    vec3 material = mix(sampled, vec3(0.98, 0.995, 0.985), whiteMix);
+    vec3 material = mix(sampled, vec3(0.992, 0.986, 0.988), whiteMix);
     vec2 light = normalize(lightPosition * surfaceSize - point + vec2(0.001));
     float specular = pow(max(0.0, dot(normal, light)), 3.0);
     float rim = exp(-abs(distance + 1.0) / 0.65);

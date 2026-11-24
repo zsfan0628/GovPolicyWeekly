@@ -12,7 +12,7 @@ on:
       version:
         description: Release version (without the v prefix)
         required: true
-        default: '1.4.0'
+        default: '1.5.0'
       publish:
         description: Publish checked installer and portable downloads
         type: boolean
@@ -49,7 +49,7 @@ jobs:
         shell: pwsh
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-          REQUESTED_VERSION: ${{ inputs.version || '1.4.0' }}
+          REQUESTED_VERSION: ${{ inputs.version || '1.5.0' }}
           PYTHONUTF8: '1'
         run: |
           $version = $env:REQUESTED_VERSION
@@ -63,8 +63,9 @@ jobs:
           python -m scripts.test_site_map
           if ($LASTEXITCODE -ne 0) { throw 'Site map interaction checks failed' }
           python -m scripts.preview_map_intro
-          if ($LASTEXITCODE -ne 0) { throw 'Particle startup checks failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'Horizon calendar transition checks failed' }
           ./scripts/build_release.ps1 -Version $version
+          ./scripts/check_windows_upgrade.ps1 -Installer (Resolve-Path "release/GovPolicyWeekly_Setup_$version.exe").Path
       - name: Save download files
         uses: actions/upload-artifact@v4
         with:
@@ -72,7 +73,9 @@ jobs:
           path: |
             release/GovPolicyWeekly_Setup_*.exe
             release/GovPolicyWeekly_windows_portable.zip
+            release/GovPolicyWeekly_windows_source.zip
             release/SHA256SUMS.txt
+            release/program-update.json
           if-no-files-found: error
           retention-days: 3
           compression-level: 0
@@ -86,10 +89,10 @@ jobs:
             release-check/desktop-integration/checks.json
             release-check/desktop-integration/*.png
             release-check/site-map/*.png
-            release-check/map-intro-frames/018.png
-            release-check/map-intro-frames/035.png
-            release-check/map-intro-frames/065.png
-            release-check/map-intro-frames/090.png
+            release-check/world-mark/frames/009.png
+            release-check/world-mark/frames/043.png
+            release-check/world-mark/frames/059.png
+            release-check/world-mark/frames/089.png
           retention-days: 3
           if-no-files-found: ignore
 
@@ -127,6 +130,10 @@ jobs:
               test "$comparison" = ahead
             fi
           else
+            if [ -z "$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")" ]; then
+              gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+                -f ref="refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA" >/dev/null
+            fi
             gh release create "$RELEASE_TAG" --draft --target "$GITHUB_SHA" \
               --title "GovPolicyWeekly $RELEASE_TAG" --notes-file RELEASE_NOTES.md
           fi

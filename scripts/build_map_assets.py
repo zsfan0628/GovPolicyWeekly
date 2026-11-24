@@ -25,8 +25,8 @@ if __name__ == '__main__':
     region = paths([f for f in features if f['properties']['ADM0_A3'] in {'CHN', 'TWN'}],
                    lambda x, y: ((x - 70) * .82, 56 - y))
     for name, view, body, fill, stroke, thickness in (
-        ('world-outline', '0 0 360 180', world, '#e4ebe8', '#cbd8d3', '.2'),
-        ('china-region', '0 0 57.4 41', region, '#e5eeea', '#8caaa0', '.13'),
+        ('world-outline', '0 0 360 180', world, '#eae8eb', '#dedbdc', '.2'),
+        ('china-region', '0 0 57.4 41', region, '#eae3e4', '#b29aa1', '.13'),
     ):
         (dest / (name + '.svg')).write_text(
             f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{view}">'

@@ -32,7 +32,7 @@ def create_icon(destination: Path) -> None:
                 painter = QPainter(image)
                 painter.setRenderHint(QPainter.Antialiasing)
                 painter.setPen(Qt.NoPen)
-                painter.setBrush(QColor("#a1e4cb"))
+                painter.setBrush(QColor("#eae3e4"))
                 painter.drawRoundedRect(QRectF(pixels * 0.08, pixels * 0.08, pixels * 0.84, pixels * 0.84), pixels * 0.19, pixels * 0.19)
                 svg = QSvgRenderer(str(ROOT / "ui" / "preview" / "icons" / "file-text.svg"))
                 painter.save()

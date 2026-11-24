@@ -162,6 +162,8 @@ class LLMClassifier:
         self._cache_lock = threading.Lock()
         self._contract_lock = threading.Lock()
         self._preferred_contract = None
+        self._auth_failed = threading.Event()
+        self.http_requests = 0
         if self.cache_path and self.cache_enabled:
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
             self._load_cache()
@@ -182,6 +184,8 @@ class LLMClassifier:
                 result["from_cache"] = True
                 return result
 
+        if self._auth_failed.is_set():
+            return {**self._fallback_result("LLM调用失败：本次任务因 HTTP 401 已暂停模型请求，修正配置后可仅重试模型"), "deferred": True}
         last_error = ""
         for attempt in range(1, OPENAI_MAX_RETRIES + 1):
             try:
@@ -190,6 +194,7 @@ class LLMClassifier:
                 result["from_cache"] = False
                 result["call_succeeded"] = True
                 result["model"] = OPENAI_MODEL
+                result["body_excerpted"] = len(clean_text(item.get("text", ""))) > LLM_MAX_BODY_CHARS
                 if self.cache_enabled:
                     with self._cache_lock:
                         self.cache[cache_key] = result
@@ -200,6 +205,8 @@ class LLMClassifier:
                 return result
             except ModelCallError as error:
                 last_error = str(error)
+                if error.kind == "authentication":
+                    self._auth_failed.set()
                 if not error.retryable:
                     break
                 if attempt < OPENAI_MAX_RETRIES:
@@ -242,15 +249,15 @@ class LLMClassifier:
                     body = self._request_body(payload_text, api_style, mode, temperature)
                     try:
                         try:
-                            result = post_judgment(base + "/" + endpoint, headers, body, OPENAI_TIMEOUT_SECONDS, JSON_SCHEMA)
+                            result = self._post(base + "/" + endpoint, headers, body)
                         except ModelCallError as error:
                             if error.kind != "temperature" or not temperature:
                                 raise
                             temperature = False
                             body = {key: value for key, value in body.items() if key != "temperature"}
-                            result = post_judgment(base + "/" + endpoint, headers, body, OPENAI_TIMEOUT_SECONDS, JSON_SCHEMA)
+                            result = self._post(base + "/" + endpoint, headers, body)
                     except ModelCallError as error:
-                        if error.retryable or error.kind in {"authorization", "configuration", "refusal", "incomplete"}:
+                        if error.retryable or error.kind in {"authentication", "authorization", "configuration", "refusal", "incomplete"}:
                             raise
                         errors.append(f"/{endpoint} [{mode}] {error}")
                         if error.kind == "endpoint":
@@ -263,6 +270,11 @@ class LLMClassifier:
                     result["api_prefix"] = "/v1" if base != api_bases(OPENAI_BASE_URL)[0] else "configured"
                     return result
         raise ModelCallError("；".join(errors[-6:]) or "未找到可用的模型生成接口")
+
+    def _post(self, url, headers, body):
+        with self._contract_lock:
+            self.http_requests += 1
+        return post_judgment(url, headers, body, OPENAI_TIMEOUT_SECONDS, JSON_SCHEMA)
 
     def _request_body(self, payload_text: str, style: str, mode: str, temperature: bool) -> dict:
         prompt = SYSTEM_PROMPT
@@ -295,7 +307,10 @@ class LLMClassifier:
         return self._call_api(payload_text, "responses")
 
     def _build_user_prompt(self, item: dict[str, Any]) -> str:
-        text = clean_text(item.get("text", ""))[:LLM_MAX_BODY_CHARS]
+        text = clean_text(item.get("text", ""))
+        if len(text) > LLM_MAX_BODY_CHARS:
+            tail = max(1, LLM_MAX_BODY_CHARS // 3)
+            text = text[:LLM_MAX_BODY_CHARS-tail] + "\n〔中段节选省略〕\n" + text[-tail:]
         attachments = item.get("attachments") or []
         attachment_lines = []
         for att in attachments[:10]:

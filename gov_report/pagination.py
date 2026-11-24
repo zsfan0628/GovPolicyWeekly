@@ -12,6 +12,7 @@ class DateWindow:
         self.old_pages = 0
         self.last_date = None
         self.disabled = False
+        self.reason = ""
 
     def observe(self, items, start) -> bool:
         if not self.enabled or self.disabled:
@@ -20,10 +21,12 @@ class DateWindow:
         # Do not infer chronological order from URL dates, one-row pages or missing dates.
         if len(ordinary) < 2 or any(not item.date_reliable or item.publish_date is None for item in ordinary):
             self.disabled = True
+            self.reason = "日期不足以确认倒序，继续翻页"
             return False
         dates = [item.publish_date for item in ordinary]
         if any(a < b for a, b in zip(dates, dates[1:])) or (self.last_date and self.last_date < dates[0]):
             self.disabled = True
+            self.reason = "发现日期乱序，继续翻页"
             return False
         self.last_date = dates[-1]
         self.pages += 1

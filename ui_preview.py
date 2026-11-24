@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import argparse
-import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from gov_report.config import load_sources
 from gov_report.scope import core_urls
+from gov_report.ui_fonts import configure_workspace_fonts
 from PySide6.QtCore import (
-    QAbstractListModel, QModelIndex, QObject, Property, QSortFilterProxyModel,
-    QRectF, Qt, QTimer, QUrl, Signal, Slot,
+    QAbstractListModel, QMetaObject, QModelIndex, QObject, Property, QSortFilterProxyModel,
+    Qt, QTimer, QUrl, Signal, Slot,
 )
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QImage, QPainter
+from PySide6.QtGui import QColor, QDesktopServices, QImage, QPainter
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickImageProvider, QQuickWindow
 from PySide6.QtQuickControls2 import QQuickStyle
@@ -61,12 +62,49 @@ class Rows(QAbstractListModel):
         self.endResetModel()
 
 
+class TaskActivity(Rows):
+    """A bounded-by-task timeline: update a milestone in place, don't mirror stdout."""
+    def __init__(self):
+        super().__init__([], ["eventTime", "eventKind", "eventTitle", "eventDetail", "eventAction"])
+        self.index_by_key = {}
+
+    def put(self, key, kind, title, detail="", action=""):
+        fields = dict(eventKind=kind, eventTitle=title, eventDetail=detail, eventAction=action)
+        i = self.index_by_key.get(key)
+        if i is not None and all(self.rows[i][k] == v for k, v in fields.items()):
+            return
+        fields["eventTime"] = datetime.now().strftime("%H:%M")
+        if i is None:
+            self.index_by_key[key] = len(self.rows)
+            self.append(fields)
+        else:
+            self.rows[i].update(fields)
+            self.dataChanged.emit(self.index(i), self.index(i), list(self.roles))
+
+    def clear(self):
+        self.index_by_key.clear()
+        super().clear()
+
+    def interrupt(self, detail):
+        for key, i in self.index_by_key.items():
+            row = self.rows[i]
+            if row["eventKind"] == "working":
+                self.put(key, "paused", row["eventTitle"], detail)
+
+
 class Sources(Rows):
     selectionChanged = Signal()
+    catalogueChanged = Signal()
 
     def __init__(self, path=None):
         sources = load_sources(path or ROOT / "config" / "sources.yaml")
         self.source_data = sources
+        from gov_report.config import load_yaml
+        self.locations = load_yaml(ROOT/'config'/'map-regions.yaml')
+        super().__init__(self._rows(sources), ["siteId", "siteName", "region", "department", "siteUrl", "channels", "selected"])
+
+    @staticmethod
+    def _rows(sources):
         regions = ["国家", "江苏", "湖北", "黑龙江", "南通"]
         sources = sorted(sources, key=lambda row: regions.index(row["region"]) if row.get("region") in regions else len(regions))
         rows = [dict(
@@ -74,13 +112,32 @@ class Sources(Rows):
             department=row.get("department", ""), siteUrl=row["base_url"],
             channels=len(core_urls(row)), selected=True,
         ) for i, row in enumerate(sources)]
-        super().__init__(rows, ["siteId", "siteName", "region", "department", "siteUrl", "channels", "selected"])
+        return rows
+
+    def install(self, data, locations):
+        selected = {r['siteName'] for r in self.rows if r['selected']}
+        rows = self._rows(data)
+        for row in rows:
+            row['selected'] = row['siteName'] in selected
+        self.source_data, self.locations = data, locations
+        self.replace(rows)
+        self.catalogueChanged.emit()
+        self.selectionChanged.emit()
+
+    @Property('QVariantList', notify=catalogueChanged)
+    def mapLocations(self):
+        regions = {s['region'] for s in self.rows}
+        return [loc for loc in self.locations if loc['region'] in regions]
+
+    @Property(int, notify=selectionChanged)
+    def departments(self):
+        return len({s['department'] for s in self.rows})
 
     @Property(int, notify=selectionChanged)
     def selectedCount(self):
         return sum(row["selected"] for row in self.rows)
 
-    @Property(int, constant=True)
+    @Property(int, notify=selectionChanged)
     def total(self):
         return len(self.rows)
 
@@ -183,16 +240,8 @@ class Icons(QQuickImageProvider):
         return image
 
 
-class IntroTitleImage(QQuickImageProvider):
-    def __init__(self, image):
-        super().__init__(QQuickImageProvider.Image)
-        self.image = image
-
-    def requestImage(self, image_id, size, requested_size):
-        return self.image
-
-
 class Workspace(QObject):
+    latestReportChanged = Signal()
     changed = Signal()
     toast = Signal(str)
     logAdded = Signal()
@@ -204,47 +253,10 @@ class Workspace(QObject):
     def __init__(self, sources):
         super().__init__()
         self.sources = sources
-        mask = QImage(720, 160, QImage.Format_ARGB32_Premultiplied)
-        mask.fill(Qt.transparent)
-        painter = QPainter(mask)
-        font = QFont("PingFang SC" if sys.platform == "darwin" else "Microsoft YaHei UI")
-        font.setPixelSize(140)
-        font.setWeight(QFont.DemiBold)
-        painter.setFont(font)
-        painter.setPen(Qt.white)
-        painter.drawText(QRectF(0, 0, 720, 160), Qt.AlignCenter, "政策周报")
-        painter.end()
-        points = [(x, y) for y in range(4, mask.height(), 3) for x in range(4, mask.width(), 3)
-                  if mask.pixelColor(x, y).alpha() > 130]
-        points = points[::max(1, len(points) // 2400)]
-        left = min(x for x, _ in points); right = max(x for x, _ in points)
-        top = min(y for _, y in points); bottom = max(y for _, y in points)
-        self._intro_points_json = json.dumps([dict(x=(x - left) / max(1, right - left), y=(y - top) / max(1, bottom - top))
-                                             for x, y in points])
-        self.intro_title_image = mask.copy(left, top, right-left+1, bottom-top+1)
-        painter = QPainter(self.intro_title_image)
-        painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
-        painter.fillRect(self.intro_title_image.rect(), QColor('#234b3f'))
-        painter.end()
-        world = QImage(720, 360, QImage.Format_ARGB32_Premultiplied)
-        china = QImage(574, 410, QImage.Format_ARGB32_Premultiplied)
-        for image, name in ((world, 'world-outline'), (china, 'china-region')):
-            image.fill(Qt.transparent)
-            painter = QPainter(image)
-            QSvgRenderer(str(UI / 'assets' / (name + '.svg'))).render(painter)
-            painter.end()
-        points = []
-        for y in range(3, 335, 5):
-            for x in range(3, 720, 5):
-                if world.pixelColor(x, y).alpha() < 128:
-                    continue
-                lon, lat = x / 2 - 180, 90 - y / 2
-                cx, cy = int((lon-70)*8.2), int((56-lat)*10)
-                focused = 0 <= cx < china.width() and 0 <= cy < china.height() and china.pixelColor(cx, cy).alpha() > 128
-                points.append(dict(x=x/720, y=y/360, china=focused))
-        self._intro_map_json = json.dumps(points)
         self.logs = Rows([], ["logTime", "level", "message"])
+        self.activity = TaskActivity()
         self.reports = Rows([], ["reportName", "reportPath", "reportDate", "reportSize"])
+        self.reports.modelReset.connect(self.latestReportChanged.emit)
         self._model_options = []
         self._initial_settings = {}
         self._elapsed_seconds = 0
@@ -265,6 +277,21 @@ class Workspace(QObject):
     @Property(bool, constant=True)
     def isDemo(self):
         return False
+
+    @Property(QObject, constant=True)
+    def activityModel(self):
+        return self.activity
+
+    @Property(QObject, constant=True)
+    def updater(self):
+        return getattr(self, '_updater', None)
+
+    @Property(str, constant=True)
+    def buildLabel(self):
+        try:
+            return (ROOT / "config" / "build-id.txt").read_text(encoding="utf-8-sig").strip()
+        except OSError:
+            return "本地源码"
 
     @Property("QVariantMap", constant=True)
     def initialSettings(self):
@@ -315,17 +342,14 @@ class Workspace(QObject):
     def lastPdf(self):
         return getattr(self, "_last_pdf", "")
 
-    @Property(str, constant=True)
-    def introPointsJson(self):
-        return self._intro_points_json
-
-    @Property(str, constant=True)
-    def introMapJson(self):
-        return self._intro_map_json
-
-    @Property(float, constant=True)
-    def introTitleAspect(self):
-        return self.intro_title_image.width() / self.intro_title_image.height()
+    @Property("QVariantMap", notify=latestReportChanged)
+    def latestReport(self):
+        latest = {}
+        for row in self.reports.rows:
+            match = re.search(r"周报_(\d{4}-\d{2}-\d{2})_至_(\d{4}-\d{2}-\d{2})$", row["reportName"])
+            if match and match[2] > latest.get("end", "") and "attachments" not in Path(row["reportPath"]).parts:
+                latest = dict(start=match[1], end=match[2], path=row["reportPath"])
+        return latest
 
     @Property(bool, constant=True)
     def shaderSupported(self):
@@ -355,8 +379,9 @@ class Workspace(QObject):
             data = self._stage_stats.get(kind, {})
             if kind == "llm":
                 errors = data.get("errors", 0)
-                successes = max(0, data.get("count", 0) - errors)
-                rows.append(f"模型 {successes} 成功 · {errors} 失败 · {data.get('seconds', 0):.1f} s")
+                deferred = data.get("deferred", 0)
+                successes = max(0, data.get("count", 0) - errors - deferred)
+                rows.append(f"模型 {successes} 成功 · {errors} 失败 · {deferred} 暂缓 · {data.get('seconds', 0):.1f} s")
             else:
                 rows.append(f"{label} {data.get('count', 0)}  ·  {data.get('seconds', 0):.1f} s")
         hits = sum(data.get("cache_hits", 0) for data in self._stage_stats.values())
@@ -478,6 +503,8 @@ class Preview(Workspace):
         self._state = "演示运行中"
         self._current = self._active[0]["siteName"]
         self._phase = "栏目发现"
+        self.activity.clear()
+        self.activity.put("start", "started", "演示任务已开始", f"{start_date} 至 {end_date}，共 {len(self._active)} 个站点")
         self.add_log("START", f"演示任务开始  {start_date} → {end_date}  ·  {len(self._active)} 个站点")
         self.changed.emit()
         self.timer.start()
@@ -493,6 +520,7 @@ class Preview(Workspace):
             self._running = False
             self._state = "演示完成"
             self._phase = "流程已完成"
+            self.activity.put("end", "done", "演示已结束", "本次没有访问网站，也没有生成 PDF。")
             self._current = "所有已选站点"
             self.add_log("DONE", "演示流程结束；没有发起网络请求或生成报告文件")
             self.changed.emit()
@@ -507,6 +535,8 @@ class Preview(Workspace):
             self._hits += 2 + site_index % 4
         if phase_index == 3:
             self._done += 1
+        self.activity.put("site:"+source["siteName"], "done" if phase_index == 3 else "working",
+                          source["siteName"], "本站演示完成" if phase_index == 3 else "演示中：" + phases[phase_index])
         self.add_log("DEMO", f"{source['region']} · {source['department']}  /  {phases[phase_index]}" +
                      ("  ·  本站演示完成" if phase_index == 3 else ""))
         self._step += 1
@@ -521,6 +551,8 @@ class Preview(Workspace):
         self._running = False
         self._state = "已停止"
         self._phase = "演示已停止"
+        self.activity.interrupt("演示已中止")
+        self.activity.put("end", "paused", "演示任务已停止")
         self.add_log("STOP", "演示任务已停止")
         self.changed.emit()
 
@@ -534,11 +566,28 @@ class Preview(Workspace):
         self.timer.stop()
 
 
-def launch_workspace(factory, smoke_check=None, artifacts=None, design_preview=False):
+def install_intro_guard(window, timeout_ms=2300):
+    # The Qt GUI event loop remains live even if the frame-driven timeline stalls.
+    guard = QTimer(window)
+    guard.setObjectName("introWatchdog")
+    guard.setSingleShot(True)
+    guard.setInterval(timeout_ms)
+    def sync():
+        if window.property("booting"):
+            guard.start()
+        else:
+            guard.stop()
+    guard.timeout.connect(lambda: QMetaObject.invokeMethod(window, "finishIntro") if window.property("booting") else None)
+    window.bootingChanged.connect(sync)
+    sync()
+    return guard
+
+
+def launch_workspace(factory, smoke_check=None, artifacts=None):
     QQuickStyle.setStyle("Basic")
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setApplicationName("GovPolicyWeekly")
-    app.setFont(QFont("PingFang SC" if sys.platform == "darwin" else "Microsoft YaHei UI", 13))
+    fonts = configure_workspace_fonts(app, ROOT / "assets" / "fonts")
     sources, backend = factory()
     source_filter = SourceFilter(sources)
     manage_filter = SourceFilter(sources)
@@ -546,20 +595,19 @@ def launch_workspace(factory, smoke_check=None, artifacts=None, design_preview=F
     log_filter = SourceFilter(backend.logs, ("logTime", "level", "message"), dynamic=True)
     engine = QQmlApplicationEngine()
     engine.addImageProvider("icons", Icons())
-    engine.addImageProvider('intro', IntroTitleImage(backend.intro_title_image))
     for name, value in {
-        "preview": backend, "sources": sources, "sourceFilter": source_filter,
+        "workspaceFonts": fonts, "preview": backend, "sources": sources, "sourceFilter": source_filter,
         "manageFilter": manage_filter, "mapFilter": map_filter, "logModel": log_filter, "reportModel": backend.reports,
     }.items():
         engine.rootContext().setContextProperty(name, value)
     errors = []
     engine.warnings.connect(lambda warnings: errors.extend(warning.toString() for warning in warnings))
-    engine.setInitialProperties({"workspaceV3": design_preview})
     engine.load(QUrl.fromLocalFile(str(UI / "Main.qml")))
     if not engine.rootObjects():
         backend.shutdown()
         return 1
     window = engine.rootObjects()[0]
+    install_intro_guard(window)
     app.setApplicationDisplayName("政策周报 · 界面预览" if backend.isDemo else "政策周报")
     if smoke_check:
         QTimer.singleShot(2200, lambda: smoke_check(app, window, backend, sources, source_filter, artifacts, errors))

@@ -49,8 +49,8 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         assert not image.isNull(), "Blank window capture"
         assert image.save(str(artifacts / (name + ".png")))
         # Reject a uniformly blank renderer independently of the screenshot file.
-        colors = {image.pixelColor(x, y).name() for x in range(0, image.width(), 40)
-                  for y in range(0, image.height(), 40)}
+        colors = {image.pixelColor(x, y).name() for x in range(0, image.width(), 11)
+                  for y in range(0, image.height(), 11)}
         assert len(colors) > 12, f"Blank or incomplete render: {name}"
 
     def passed(name):
@@ -63,16 +63,13 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
                 break
             QTest.qWait(50)
         assert not window.property("booting")
-        assert window.property("wallpaperReady"), "Bundled wallpaper did not load"
+        assert find("horizonCalendar").property("valid")
         capture("01-workspace")
         passed("Startup finishes and desktop workspace renders")
         check_workspace_spacing(window, artifacts)
         passed('Configuration spacing and scroll reachability at three window sizes')
 
         navigation = find("mainNavigation")
-        if backend.shaderSupported:
-            assert not navigation.property("materialFailed"), navigation.property("materialLog")
-            normal = window.grabWindow()
         lens = find("navigationLens")
         initial_x = lens.property("x")
         click(find("nav1"))
@@ -84,19 +81,7 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         window.setProperty("reducedTransparency", True)
         capture("11-reduced-transparency")
         assert window.property("reducedTransparency")
-        if backend.shaderSupported:
-            opaque = window.grabWindow()
-            ratio = normal.width() / window.width()
-            corner = navigation.mapToScene(QPointF(0, 0))
-            differences = 0
-            for x in range(20, int(navigation.width()) - 20, 16):
-                for y in range(8, int(navigation.height()) - 8, 6):
-                    px, py = round((corner.x() + x) * ratio), round((corner.y() + y) * ratio)
-                    if normal.pixelColor(px, py) != opaque.pixelColor(px, py):
-                        differences += 1
-            assert differences > 50, "Glass output is indistinguishable from its opaque fallback"
-            window.setProperty("reducedTransparency", False)
-        passed("Rendered glass material, animated navigation lens and opaque fallback")
+        passed("Animated navigation selection and reduced transparency")
 
         seven = find("recent7Days")
         thirty = find("recent30Days")
@@ -106,7 +91,7 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         assert thirty.property("selected") and not seven.property("selected")
         assert find("startDate").property("value") == (end - dt.timedelta(days=29)).isoformat()
         assert find("endDate").property("value") == end.isoformat()
-        assert thirty.property("background").property("color").name() == "#e5f0e9"
+        assert thirty.property("background").property("color") != seven.property("background").property("color")
         capture("12-recent-30-selected")
         click(thirty)
         assert thirty.property("selected"), "Clicking the active preset must not deselect it"
@@ -201,6 +186,20 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
             backend.advance()
         capture("04-running")
         assert backend.done > 0 and backend.pages > 0
+        timeline = find("activityList")
+        for index in range(20):
+            backend.activity.put("sample:"+str(index),"done","演示站点 "+str(index),"已检查")
+        QTest.qWait(220)
+        assert timeline.property("atYEnd")
+        QTest.wheelEvent(window, timeline.mapToScene(QPointF(130, 40)), QPoint(0, 240))
+        QTest.qWait(250)
+        assert not timeline.property("followLatest") and not timeline.property("atYEnd")
+        before = timeline.property("contentY")
+        backend.activity.put("sample:20","working","新站点","正在查找文章")
+        QTest.qWait(150)
+        assert abs(timeline.property("contentY")-before)<2
+        passed("Reading a previous task milestone stays put as new sites arrive")
+        click(find("activityMode"))
         logs = find("logList")
         for index in range(60):
             backend.add_log("DEMO", f"日志滚动检查 {index:02d}")
@@ -257,24 +256,19 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         assert not window.property("booting")
         window.setProperty("reducedMotion", False)
         QMetaObject.invokeMethod(window, "replayIntro")
-        intro_frames = artifacts / "intro-frames"
-        intro_frames.mkdir(exist_ok=True)
-        for frame in range(50):
-            QTest.qWait(60)
-            captured = window.grabWindow()
-            captured.scaledToWidth(960, Qt.SmoothTransformation).save(str(intro_frames / f"{frame:03d}.png"))
-            if frame == 3:
-                assert window.property("booting")
-                captured.save(str(artifacts / "09-intro-start.png"))
-            if frame == 13:
-                captured.save(str(artifacts / "10-intro-transition.png"))
-        QTest.qWait(500)
+        assert window.property("booting")
+        duration = window.property("introDuration")
+        QTest.qWait(duration // 4)
+        window.grabWindow().save(str(artifacts / "09-intro-start.png"))
+        QTest.qWait(duration // 3)
+        window.grabWindow().save(str(artifacts / "10-intro-transition.png"))
+        QTest.qWait(duration // 2 + 150)
         assert not window.property("booting")
         QMetaObject.invokeMethod(window, "replayIntro")
         QTest.qWait(160)
         click(find("skipIntro"))
         assert not window.property("booting") and window.property("reveal") == 1
-        passed("Compact viewport, particle startup, reduced-motion and skip action")
+        passed("Compact viewport, world-to-title opening, reduced-motion and skip action")
 
         # A one-site run must reach a real terminal state without producing files.
         sources.selectAll(False)

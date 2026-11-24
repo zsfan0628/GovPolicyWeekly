@@ -21,6 +21,8 @@ wallpaper. Its generation prompt and provenance are in the parent README.
 `world-outline.svg` and `china-region.svg` are schematic derivatives of Natural
 Earth 1:110m Admin 0 countries, public-domain data. Generated with
 `scripts/build_map_assets.py`; no online tiles or geocoding services are used.
+The opening maps and transition (`intro-grain-world.png`, `intro-grain-neighbors.png`, `intro-grain-china.png`, `intro-grain-flow.png`)
+are rendered offline from these outlines with `scripts/build_intro_grain.py`.
 
 - Source: https://github.com/nvkelso/natural-earth-vector/blob/master/geojson/ne_110m_admin_0_countries.geojson
 - Terms: https://www.naturalearthdata.com/about/terms-of-use/

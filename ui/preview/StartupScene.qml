@@ -1,103 +1,104 @@
 import QtQuick
 import QtQuick.Controls
+import "Pearl.js" as Pearl
 
-Item {
-    id: startup
-    property real progress: 0
-    property real departure: 0
-    property bool reducedMotion: false
-    property Item brandTarget: null
-    property point brandPosition: Qt.point(78, 25)
-    readonly property var world: JSON.parse(preview.introMapJson)
-    readonly property var glyphs: JSON.parse(preview.introPointsJson)
-    readonly property var origins: world.filter(p => p.china)
-    readonly property real titleWidth: Math.min(360, width * 0.38)
-    readonly property real titleHeight: titleWidth / preview.introTitleAspect
-    readonly property real zoom: smooth((progress - 0.22) / 0.30)
-    readonly property real morph: smooth((progress - 0.51) / 0.34)
-    readonly property real solid: smooth((progress - 0.84) / 0.12)
+FocusScope {
+    id: scene
+    required property real progress
+    required property Text brandTarget
     signal skipRequested()
-    function clamp(t) { return Math.max(0, Math.min(1, t)) }
-    function smooth(t) { t=clamp(t); return t*t*(3-2*t) }
-    function mapPoint(p) {
-        const span=Math.min(width*0.86, 1050)*(1+1.3*zoom)
-        return Qt.point(width/2 + (p.x-(0.5+0.30*zoom))*span,
-                        height*0.44 + (p.y-(0.48-0.17*zoom))*span/2)
+
+    function phase(start,end) {
+        const t=Math.min(1,Math.max(0,(progress-start)/(end-start)))
+        return t*t*(3-2*t)
     }
-    function destination() {
-        return brandTarget ? brandTarget.mapToItem(startup, 0, 3) : Qt.point(28,28)
+    function mix(a,b,t) { return a+(b-a)*t }
+    readonly property real wordIn: phase(.69,.77)
+    readonly property real travel: phase(.79,.985)
+    readonly property real workspaceReveal: phase(.82,.985)
+    readonly property real mapScale: Math.min(width*.86/752,height*.66/336,1.38)
+    readonly property real centerY: height*.47
+    readonly property point landing: {
+        // Re-evaluate the navigation label's scene position during flight and resize.
+        const frame=progress, w=width, h=height
+        return brandTarget.mapToItem(scene,0,0)
     }
-    onProgressChanged: particles.requestPaint()
-    onDepartureChanged: { brandPosition = destination(); particles.requestPaint() }
-    onWidthChanged: particles.requestPaint()
-    onHeightChanged: particles.requestPaint()
-    Rectangle { anchors.fill: parent; color: "#f4f8f5"; opacity: 1-startup.departure }
-    Canvas {
-        id: particles; objectName: "introParticles"
-        anchors.fill: parent; renderTarget: Canvas.Image
-        opacity: 1-startup.departure
-        onAvailableChanged: requestPaint()
-        onPaint: {
-            const c=getContext("2d"); c.clearRect(0,0,width,height)
-            const reveal=startup.smooth(startup.progress/0.20)
-            for (let i=0;i<startup.world.length;i++) {
-                const p=startup.world[i], xy=startup.mapPoint(p)
-                if (xy.x < 0 || xy.x > width || xy.y < 0 || xy.y > height) continue
-                const edge=Math.min(1,xy.x/70,(width-xy.x)/70,xy.y/60,(height-xy.y)/60)
-                const seed=(i*0.6180339)%1
-                const size=1.1+seed*0.55+startup.zoom*0.15
-                c.globalAlpha=edge*reveal*(p.china ? 0.6 : 0.30)*(1-startup.morph*0.86)
-                c.fillStyle=p.china ? "#41866f" : "#879b92"
-                c.beginPath(); c.arc(xy.x, xy.y+(1-reveal)*7*Math.sin(i), size,0,Math.PI*2); c.fill()
-            }
-            const nodes=[[116.4,39.9],[126.64,45.75],[118.8,32.06],[114.3,30.59],[120.86,32.01]]
-            for(let i=0;i<nodes.length;i++) {
-                const alpha=startup.smooth((startup.progress-0.36-i*0.018)/0.09)*(1-startup.smooth((startup.progress-0.55)/0.1))
-                const p=startup.mapPoint({x:(nodes[i][0]+180)/360,y:(90-nodes[i][1])/180})
-                c.globalAlpha=alpha; c.strokeStyle="#518f79"; c.lineWidth=1
-                c.beginPath(); c.arc(p.x,p.y,6,0,Math.PI*2); c.stroke()
-                c.fillStyle="#296c55"; c.beginPath(); c.arc(p.x,p.y,2,0,Math.PI*2); c.fill()
-            }
-            if(startup.progress>0.51 && startup.origins.length>0) {
-                for(let i=0;i<startup.glyphs.length;i++) {
-                    const p=startup.glyphs[i], seed=(i*0.381966)%1
-                    const from=startup.mapPoint(startup.origins[(i*37)%startup.origins.length])
-                    const t=startup.smooth((startup.progress-0.51-seed*0.04)/0.31)
-                    const toX=width/2+(p.x-0.5)*startup.titleWidth
-                    const toY=height*0.45+(p.y-0.5)*startup.titleHeight
-                    const x=from.x+(toX-from.x)*t
-                    const y=from.y+(toY-from.y)*t-Math.sin(t*Math.PI)*(16+seed*30)
-                    c.globalAlpha=startup.clamp((startup.progress-0.51)*16)*(1-startup.solid)*0.85
-                    c.fillStyle=i%9===0 ? "#6d9e8a" : "#234b3f"
-                    c.fillRect(x,y,1.3,1.3)
+    focus: visible
+    Keys.onEscapePressed: event => { event.accepted=true; skipRequested() }
+    Rectangle { anchors.fill:parent; color:Pearl.paper; opacity:1-scene.workspaceReveal }
+    MouseArea { anchors.fill:parent; acceptedButtons:Qt.AllButtons }
+
+    Item {
+        id:tile; width:752; height:336; scale:scene.mapScale
+        x:(scene.width-width)/2; y:scene.centerY-height/2
+        opacity:1-scene.wordIn; visible:opacity>0
+        Item {
+            id:camera; objectName:"introCamera"
+            readonly property real focusT:scene.phase(.12,.365)
+            width:tile.width; height:tile.height; transformOrigin:Item.TopLeft
+            readonly property real zoom:2.12
+            readonly property point focusPoint:Qt.point(575,128)
+            scale:scene.mix(1,zoom,focusT)
+            x:tile.width/2-scene.mix(tile.width/2,focusPoint.x,focusT)*scale
+            y:tile.height/2-scene.mix(tile.height/2,focusPoint.y,focusT)*scale
+            Item {
+                objectName:"introGrainWorld"; anchors.fill:parent
+                opacity:1-scene.phase(.50,.715); visible:opacity>0
+                Image {
+                    objectName:"introWorldWide"; anchors.fill:parent
+                    source:scene.visible ? "assets/intro-grain-world.png" : ""
+                    smooth:true; mipmap:true; opacity:1-camera.focusT; visible:opacity>0
+                    onStatusChanged:if(status===Image.Error && scene.visible) scene.skipRequested()
+                }
+                Image {
+                    objectName:"introWorldClose"; anchors.fill:parent
+                    source:scene.visible ? "assets/intro-grain-neighbors.png" : ""
+                    smooth:true; mipmap:true; opacity:camera.focusT; visible:opacity>0
+                    onStatusChanged:if(status===Image.Error && scene.visible) scene.skipRequested()
                 }
             }
-            c.globalAlpha=1
+            Image {
+                objectName:"introGrainChina"
+                width:tile.width/camera.zoom; height:tile.height/camera.zoom
+                x:camera.focusPoint.x-width/2; y:camera.focusPoint.y-height/2
+                source:scene.visible ? "assets/intro-grain-china.png" : ""
+                smooth:true; mipmap:true
+                opacity:1-scene.phase(.47,.49); visible:opacity>0
+                onStatusChanged:if(status===Image.Error && scene.visible) scene.skipRequested()
+            }
+        }
+        Item {
+            // Clip the sprite sheet, not the geography panning across the window.
+            anchors.fill:parent; clip:true
+            Image {
+                id:flow; objectName:"introGrainFlow"
+                readonly property int frame:Math.round(29*Math.min(1, Math.max(0,(scene.progress-.49)/.26)))
+                source:scene.visible ? "assets/intro-grain-flow.png" : ""
+                width:tile.width*5; height:tile.height*6
+                x:-(frame%5)*tile.width; y:-Math.floor(frame/5)*tile.height
+                opacity:scene.phase(.47,.49)
+                onStatusChanged:if(status===Image.Error && scene.visible) Qt.callLater(function(){if(scene.visible)scene.skipRequested()})
+            }
         }
     }
-    Image {
-        id: title; objectName: "introSolidTitle"
-        source: "image://intro/title"
-        readonly property point target: startup.brandPosition
-        width: startup.titleWidth + ((startup.brandTarget ? startup.brandTarget.width : 68)-startup.titleWidth)*startup.departure
-        height: width/preview.introTitleAspect
-        x: (startup.width-startup.titleWidth)/2*(1-startup.departure)+target.x*startup.departure
-        y: (startup.height*0.45-startup.titleHeight/2)*(1-startup.departure)+target.y*startup.departure
-        opacity: startup.solid
-        smooth: true
-    }
+    TextMetrics { id:metrics; font:scene.brandTarget.font; text:scene.brandTarget.text }
     Text {
-        anchors.horizontalCenter: parent.horizontalCenter
-        y: parent.height*0.45 + startup.titleHeight/2 + 25
-        text: "POLICY WEEKLY"; font.pixelSize: 12; color: "#82958b"
-        opacity: startup.smooth((startup.progress-0.77)/0.18)*(1-startup.departure)
+        id:word; objectName:"introTitle"
+        text:scene.brandTarget.text; font:scene.brandTarget.font; color:scene.brandTarget.color
+        readonly property rect ink:metrics.tightBoundingRect
+        readonly property real largeScale:252*scene.mapScale/Math.max(1,ink.width)
+        transformOrigin:Item.TopLeft
+        scale:scene.mix(largeScale,1,scene.travel)
+        x:scene.mix(scene.width/2-(ink.x+ink.width/2)*largeScale,scene.landing.x,scene.travel)
+        y:scene.mix(scene.centerY-(baselineOffset+ink.y+ink.height/2)*largeScale,scene.landing.y,scene.travel)
+        opacity:scene.wordIn; Accessible.ignored:true
     }
-    AppButton {
-        objectName: "skipIntro"
-        anchors.right: parent.right; anchors.rightMargin: 28; anchors.bottom: parent.bottom; anchors.bottomMargin: 24
-        text: "跳过"; tone: "ghost"; compact: true
-        opacity: 1-startup.departure
-        onClicked: startup.skipRequested()
+    AbstractButton {
+        id:skip; objectName:"skipIntro"; text:"跳过"
+        anchors.right:parent.right; anchors.rightMargin:26; anchors.bottom:parent.bottom; anchors.bottomMargin:20
+        width:52; height:32; hoverEnabled:true; opacity:1-scene.travel
+        background:Rectangle { radius:5; color:skip.hovered ? Pearl.neutral : "transparent"; border.color:skip.activeFocus ? Pearl.ink : "transparent" }
+        contentItem:Text { text:skip.text; font.pixelSize:12; color:Pearl.muted; horizontalAlignment:Text.AlignHCenter; verticalAlignment:Text.AlignVCenter }
+        onClicked:scene.skipRequested()
     }
-    Keys.onEscapePressed: skipRequested()
 }

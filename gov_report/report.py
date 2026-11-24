@@ -74,6 +74,7 @@ REPORT_COLUMNS = [
     "document_action",
     "llm_confidence",
     "llm_reason",
+    "personnel_stage", "industry_relevance", "date_source", "date_conflict", "date_uncertain", "attachment_note",
 ]
 
 

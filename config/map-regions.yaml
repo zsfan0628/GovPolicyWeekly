@@ -1,0 +1,5 @@
+- {region: 国家, title: 国家部门, city: 北京, lon: 116.40, lat: 39.90, lx: 0.08, ly: 0.27}
+- {region: 黑龙江, title: 黑龙江, city: 哈尔滨, lon: 126.64, lat: 45.75, lx: 0.71, ly: 0.14}
+- {region: 江苏, title: 江苏, city: 南京, lon: 118.80, lat: 32.06, lx: 0.72, ly: 0.45}
+- {region: 湖北, title: 湖北, city: 武汉, lon: 114.30, lat: 30.59, lx: 0.10, ly: 0.67}
+- {region: 南通, title: 南通, city: 南通, lon: 120.86, lat: 32.01, lx: 0.73, ly: 0.75}

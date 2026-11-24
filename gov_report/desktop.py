@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import QFileDialog
 
 from ui_preview import APP_DIR, ROOT, Workspace
 from .task_state import TaskState
+from .llm_transport import access_diagnostic
 
 
 PROGRESS_PREFIX = "@@GOV_PROGRESS "
@@ -96,14 +98,27 @@ def fetch_model_catalogue(base_url: str, api_key: str, verify_ssl: bool) -> tupl
     if not urlsplit(base).path:
         endpoints.append(base + "/v1/models")
     for index, endpoint in enumerate(endpoints):
-        response = requests.get(endpoint, headers={"Authorization": f"Bearer {api_key.strip()}"},
-                                timeout=(10, 30), verify=verify_ssl)
+        try:
+            response = requests.get(endpoint, headers={"Authorization": f"Bearer {api_key.strip()}"},
+                                    timeout=(10, 30), verify=verify_ssl)
+        except requests.exceptions.SSLError:
+            raise ValueError("模型列表 TLS 证书校验失败，请检查证书链") from None
+        except requests.exceptions.ProxyError:
+            raise ValueError("模型列表代理连接失败，请检查系统代理") from None
+        except requests.Timeout:
+            raise ValueError("获取模型列表超时，请检查网络后重试") from None
+        except requests.RequestException:
+            raise ValueError("模型列表网络连接失败，未取得服务端响应") from None
         if response.status_code in (404, 405) and index + 1 < len(endpoints):
             continue
-        if response.status_code in (401, 403):
-            raise ValueError(f"服务返回 HTTP {response.status_code}，请检查密钥、接口地址及模型访问权限")
-        response.raise_for_status()
-        payload = response.json()
+        if response.status_code in (401, 402, 403):
+            raise ValueError(access_diagnostic(response))
+        if response.status_code >= 400:
+            raise ValueError(f"模型列表返回 HTTP {response.status_code}，请检查接口路径或稍后重试")
+        try:
+            payload = response.json()
+        except ValueError:
+            raise ValueError("模型列表未返回 JSON，请确认填写的是 API 根地址而非网页地址") from None
         values = payload.get("data", payload.get("models", [])) if isinstance(payload, dict) else payload
         if not isinstance(values, list):
             raise ValueError("接口返回的不是模型列表，请确认该服务支持 /models 接口")
@@ -120,7 +135,7 @@ def fetch_model_catalogue(base_url: str, api_key: str, verify_ssl: bool) -> tupl
 
 
 class DesktopController(Workspace):
-    def __init__(self, sources, store: SettingsStore | None = None, resource_dir: Path = ROOT):
+    def __init__(self, sources, store: SettingsStore | None = None, resource_dir: Path = ROOT, *, enable_updates=False):
         super().__init__(sources)
         self.store = store or SettingsStore()
         self.resource_dir = resource_dir
@@ -135,6 +150,10 @@ class DesktopController(Workspace):
         selected_model = self.config.get("openai_model", "")
         if selected_model and selected_model not in self._model_options:
             self._model_options.append(selected_model)
+        if enable_updates:
+            from .update_ui import UpdateUI
+            self._updater = UpdateUI(self, self.resource_dir/'config', self.store.path.parent)
+            QTimer.singleShot(3500, self._updater.check)
         selected = self.config.get("selected_sources")
         if isinstance(selected, list):
             for row in sources.rows:
@@ -160,6 +179,9 @@ class DesktopController(Workspace):
         self._probe_process = None
         self._task_path = self.config.get("last_task_path", "")
         self._coverage = {}
+        self._site_hits = {}
+        self._site_errors = {}
+        self._attachment_errors = 0
         self._resume_request = None
         self._refresh_coverage()
         self.timer = QTimer(self)
@@ -167,6 +189,7 @@ class DesktopController(Workspace):
         self.timer.timeout.connect(self._drain)
         self.timer.start()
         self.add_log("READY", "采集工作台已就绪")
+        self.add_log("INFO", "构建：" + self.buildLabel)
         self.add_log("INFO", f"已载入 {sources.total} 个站点；政策与人事核心栏目，最多三站并行")
         self.add_log("INFO", "PDF 可由内置引擎生成，不依赖 LibreOffice")
         self.refreshReports()
@@ -407,6 +430,8 @@ class DesktopController(Workspace):
                 command += ["--resume-task", str(task_path), "--retry-mode", self._resume_request[1]]
             else:
                 command += ["--task-state", str(task_path)]
+                if (options or {}).get("fresh_check"):
+                    command.extend(("--no-cache", "--verify-dates"))
             if config["download_attachments"]:
                 command.append("--download-attachments")
             for key, flag in (("use_llm", "--no-llm"), ("download_attachments", "--no-download-attachments"),
@@ -434,6 +459,7 @@ class DesktopController(Workspace):
                                        creationflags=(subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == "nt" else 0)
         except (ValueError, OSError, TypeError) as error:
             self.add_log("ERROR", f"无法启动：{error}")
+            self.activity.put("launch-error", "warning", "未能开始采集", "请核对日期、站点与模型配置。", "debug")
             self.toast.emit(str(error))
             return
         self.process = process
@@ -458,6 +484,12 @@ class DesktopController(Workspace):
         self._last_pdf = ""
         self._started_at = time.monotonic()
         self._elapsed_seconds = 0
+        self._site_hits.clear()
+        self._site_errors.clear()
+        self._attachment_errors = 0
+        self.activity.clear()
+        self.activity.put("start", "started", "已开始整理本期周报",
+                          f"{start_date} 至 {end_date}，共选择 {len(selected)} 个站点")
         self.add_log("START", f"任务开始  {start_date} 至 {end_date} · {len(selected)} 个站点")
         self.changed.emit()
         self._reader = threading.Thread(target=self._read_worker, args=(process, run_id, worker_log), daemon=True)
@@ -495,8 +527,10 @@ class DesktopController(Workspace):
                 self._task_path = event.get("path", self._task_path)
         elif kind == "source_started":
             self._current = str(event.get("source", ""))
+            self._site_hits[self._current] = 0
             self._phase = "栏目与列表"
             self._active_sources[self._current] = self._phase
+            self.activity.put("site:"+self._current, "working", self._current, "正在查找统计周期内的文章")
         elif kind == "page_processed":
             self._pages += 1
             self._phase = "详情提取" if event.get("kind") == "detail" else "栏目与列表"
@@ -513,18 +547,59 @@ class DesktopController(Workspace):
             stage["seconds"] += max(0, float(event.get("seconds", 0)))
             stage["cache_hits"] += int(bool(event.get("cache_hit")))
             stage["errors"] += int(bool(event.get("error")))
+            stage["deferred"] = stage.get("deferred", 0) + int(bool(event.get("deferred")))
         elif kind == "record_included":
             self._hits += 1
+            name = str(event.get("source") or "")
+            if name in self._site_hits and name in self._active_sources:
+                self._site_hits[name] = self._site_hits.get(name, 0) + 1
+                if not self._site_errors.get(name):
+                    self.activity.put("site:"+name, "working", name, f"已收录 {self._site_hits[name]} 条，继续检查中")
             self._phase = "分类与汇总"
+        elif kind == "issue_resolved":
+            name = str(event.get("source") or "")
+            known = self._site_errors.get(name, {})
+            key = str(event.get("url") or "").partition("#")[0]
+            if known.pop(("candidate",key), None) is not None:
+                self._errors -= 1
+                self._show_site_activity(name)
         elif kind == "source_finished":
             self._done += 1
-            self._active_sources.pop(str(event.get("source", "")), None)
+            name = str(event.get("source", ""))
+            self._active_sources.pop(name, None)
+            summary = next((s for s in self._coverage.get("sources", []) if s.get("name")==name), {})
+            count = summary.get("counts", {}).get("included", self._site_hits.get(name, 0))
+            outcome = summary.get("status")
+            if outcome == "complete":
+                self._errors -= len(self._site_errors.pop(name, {}))
+            uncertain = outcome in {"partial","failed","pending"} or (not outcome and bool(self._site_errors.get(name)))
+            if uncertain:
+                status = "本站采集失败" if outcome == "failed" else "部分内容待核查"
+            else:
+                status = "已沿用上次结果" if event.get("reused") else "已检查"
+            self.activity.put("site:"+name, "warning" if uncertain else "done", name,
+                              f"{status} · 收录 {count} 条", "coverage" if uncertain else "")
         elif kind == "error":
-            self._errors += 1
+            name = str(event.get("source") or "补充链接")
+            if event.get("kind") == "attachment":
+                self._errors += 1
+                self._attachment_errors += 1
+                self.activity.put("attachments", "warning", "部分附件未下载",
+                                  f"有 {self._attachment_errors} 次下载失败，不影响已生成的 PDF。", "debug")
+            else:
+                stage = event.get("kind", "source")
+                group = "candidate" if stage in {"llm","detail"} else stage
+                key = (group, str(event.get("url") or "").partition("#")[0])
+                known = self._site_errors.setdefault(name, {})
+                if key not in known:
+                    self._errors += 1
+                known[key] = event.get("failure_kind") or stage
+                self._show_site_activity(name)
         elif kind == "export_started":
             self._state = "生成报告中"
             self._phase = "PDF 报告"
             self._hits = int(event.get("record_count", self._hits))
+            self.activity.put("report", "working", "正在排版本期周报", f"共 {self._hits} 条收录信息")
         elif kind == "manual_started":
             self._current = "手工补充链接"
             self._phase = "详情提取"
@@ -532,15 +607,35 @@ class DesktopController(Workspace):
             pdf = Path(event.get("paths", {}).get("pdf", ""))
             if pdf.is_file() and pdf.suffix.lower() == ".pdf":
                 self._last_pdf = str(pdf.absolute())
+                self.activity.put("report", "done", "周报 PDF 已生成", f"本期收录 {self._hits} 条信息", "report")
                 self.add_log("DONE", "PDF 已生成，可立即打开")
                 self.refreshReports()
         elif kind == "attachments_started":
             self._state = "PDF 已生成，下载附件中"
             self._phase = "附件下载"
+            self.activity.put("attachments", "working", "正在检查并下载附件", "周报 PDF 已经可以打开")
         elif kind == "completed":
             self._completed_payload = event
             self._hits = int(event.get("record_count", self._hits))
         self.changed.emit()
+
+    def _show_site_activity(self, name):
+        issues = self._site_errors.get(name, {})
+        scanning = name in self._site_hits and name in self._active_sources
+        if not issues:
+            self.activity.put("site:"+name, "working" if scanning else "done", name,
+                              "已更新核查结果，继续处理中" if scanning else "先前待核查的记录已处理")
+            return
+        labels = {"content_unparsed":"正文未取得", "date_unverified":"发布日期不明确", "date_conflict":"日期线索冲突",
+                  "not_found":"页面不存在", "access_blocked":"访问受限", "browser_blocked":"浏览器请求受限",
+                  "timeout":"请求超时", "rate_limited":"请求频率受限", "tls":"证书校验失败",
+                  "llm_failed":"模型未完成判断", "llm":"模型未完成判断", "list":"栏目请求未成功",
+                  "detail":"文章待核查", "source":"站点处理出错"}
+        by_url = {url or group: reason for (group,url),reason in issues.items()}
+        counts = Counter(labels.get(reason, "请求未成功") for reason in by_url.values())
+        detail = "；".join(f"{label} × {n}" for label,n in counts.items())
+        prefix = "仍在采集" if scanning and "source" not in issues.values() else "待核查"
+        self.activity.put("site:"+name, "warning", name, prefix+" · "+detail)
 
     def _drain(self):
         for _ in range(200):
@@ -573,15 +668,18 @@ class DesktopController(Workspace):
                     self.apiBaseResolved.emit(base_url)
                     self.saveConfig({"openai_base_url": base_url})
                     self.add_log("INFO", f"已获取 {len(models)} 个模型")
+                    self.activity.put("models", "done", "模型列表已更新", f"可以从 {len(models)} 个模型中选择")
                     self.toast.emit(f"已获取 {len(models)} 个模型")
                 else:
                     self.add_log("ERROR", f"获取模型失败：{value}")
-                    self.toast.emit("获取模型失败，详情见运行日志")
+                    self.activity.put("models", "warning", "未能取得模型列表", "请检查接口地址、密钥或服务访问权限。", "debug")
+                    self.toast.emit("获取模型失败，详情见技术明细")
                 self.modelsChanged.emit()
             elif kind == "reports" and token == self._scan_request:
                 self.reports.replace(value)
             elif kind == "report_error" and token == self._scan_request:
                 self.add_log("WARN", f"报告列表读取失败：{value}")
+                self.activity.put("report-list", "warning", "未能读取历史报告", "请检查输出目录是否可访问。", "debug")
             elif kind == "model_test":
                 self._model_testing = False
                 current = tuple(self.config.get(k, "") for k in ("openai_base_url", "openai_api_key", "openai_model"))
@@ -595,6 +693,11 @@ class DesktopController(Workspace):
                     if secret:
                         self._model_test_result = self._model_test_result.replace(secret, "[已隐藏密钥]")
                 self.add_log("INFO" if value.get("ok") else "ERROR", self._model_test_result)
+                if current == token:
+                    ok = bool(value.get("ok"))
+                    self.activity.put("model-test", "done" if ok else "warning",
+                                      "模型调用测试通过" if ok else "模型调用测试失败",
+                                      "已使用测试样例验证接口。" if ok else "请核对所选模型和服务权限。", "" if ok else "debug")
                 self.changed.emit()
         if self._running:
             seconds = time.monotonic() - self._started_at
@@ -614,20 +717,31 @@ class DesktopController(Workspace):
         if was_stopping:
             self._state = "已停止"
             self._phase = "任务已停止"
+            self.activity.interrupt("本次检查已停止")
+            self.activity.put("end", "paused", "采集已停止", "已记录本次任务的处理进度。", "coverage" if self.hasTask else "")
             self.add_log("STOP", "任务已停止，未完成的报告不会标记为成功")
         elif code == 0 and pdf.is_file() and pdf.suffix.lower() == ".pdf":
             incomplete = any(self._coverage.get(k, 0) for k in ("partial", "failed", "pending"))
             self._state = "报告已生成（采集不完整）" if incomplete else "已完成（有警告）" if self._errors else "已完成"
             self._phase = "报告已生成"
             self._last_pdf = str(pdf.absolute())
+            self.activity.put("report", "done", "周报 PDF 已生成", f"本期收录 {self._hits} 条信息", "report")
+            if "attachments" in self.activity.index_by_key and not self._attachment_errors:
+                self.activity.put("attachments", "done", "附件处理已结束")
+            if incomplete or self._errors:
+                self.activity.put("end", "warning", "本次采集有待核查项",
+                                  "报告已生成，可查看站点覆盖情况和未完成的项目。", "coverage" if self.hasTask else "debug")
             self.add_log("DONE", f"已生成 PDF：{self._last_pdf}")
             self.toast.emit("PDF 报告已生成")
             self.refreshReports()
         else:
             self._state = "任务失败"
-            self._phase = "请查看运行日志"
+            self._phase = "请查看技术明细"
+            self.activity.interrupt("本次任务未能完成")
+            self.activity.put("end", "failed", "任务未能正常完成",
+                              "请查看失败原因后重试。", "debug")
             self.add_log("ERROR", f"任务未成功生成 PDF，退出码：{code}")
-            self.toast.emit("任务未完成，详情见运行日志")
+            self.toast.emit("任务未完成，详情见技术明细")
         self.changed.emit()
         if self._closing:
             self.closeReady.emit()
@@ -668,6 +782,8 @@ class DesktopController(Workspace):
             self.closeReady.emit()
 
     def shutdown(self):
+        if getattr(self, '_updater', None):
+            self._updater.shutdown()
         self._closed = True
         if self._probe_process and self._probe_process.poll() is None:
             self._probe_process.kill()

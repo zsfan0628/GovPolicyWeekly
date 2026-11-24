@@ -6,11 +6,13 @@ from PySide6.QtQml import QQmlComponent, QQmlEngine, QQmlExpression
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtWidgets import QApplication
 
+from gov_report.ui_fonts import configure_workspace_fonts
 
 class LogLayoutTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+        configure_workspace_fonts(cls.app, Path(__file__).resolve().parents[1] / 'assets/fonts')
 
     def test_fixed_columns_and_first_line_baselines_across_lengths(self):
         engine = QQmlEngine()

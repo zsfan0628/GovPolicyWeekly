@@ -24,3 +24,5 @@ smoke-test*.json
 release-check/
 release/
 audit-results/
+config/program-build.json
+config/build-id.txt

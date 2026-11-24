@@ -77,7 +77,13 @@ class TaskState:
         return [(name, key, json.loads(payload)) for name, key, payload in rows]
 
     def records(self, source=None):
-        return [p["record"] for _, _, p in self.rows("candidate", source) if p.get("record")]
+        return [p["record"] for _, _, p in self.rows("candidate", source) if p.get("status") == "included" and p.get("record")]
+
+    def statuses(self):
+        """Snapshot outcomes without loading article bodies or cached HTML."""
+        with self.lock, closing(sqlite3.connect(self.path)) as db:
+            return {(kind, source, key): status for kind, source, key, status in db.execute(
+                "SELECT kind,source,key,json_extract(payload,'$.status') FROM entries WHERE kind IN ('page','candidate')")}
 
     def summary(self):
         meta = self.get("meta", "", "task") or {}
@@ -108,7 +114,7 @@ class TaskState:
                                              column=p.get("column", ""), failure_kind=p.get("failure_kind", ""),
                                              http_status=p.get("http_status")) for p in candidates
                                         if p.get("status") in {"llm_failed", "detail_failed", "pending"}],
-                                details=[{k: p.get(k, "") for k in ("url", "column", "status", "reason", "stop", "failure_kind", "http_status")} for p in pages]))
+                                details=[{k: p.get(k, "") for k in ("url", "column", "status", "outcome", "links", "candidates", "reason", "stop", "failure_kind", "http_status")} for p in pages]))
         return dict(sources=sources, counts=totals, start_date=meta.get("start_date", ""), end_date=meta.get("end_date", ""),
                     complete=sum(s["status"] == "complete" for s in sources),
                     partial=sum(s["status"] == "partial" for s in sources),

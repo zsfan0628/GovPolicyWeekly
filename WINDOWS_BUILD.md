@@ -11,7 +11,7 @@ Windows `.exe` 需要在 Windows 环境打包。现在可以由 GitHub Actions �
 3. 最终用户直接从 Releases 下载安装包或便携包，不需要安装构建依赖。
 
 推送到 `main` 也会构建并运行检查，但普通提交不会发布下载文件。
-只有提交说明包含 `[release]` 的 `main` 推送才自动发布，使用工作流中配置的默认版本（当前为 `1.4.0`）。
+只有提交说明包含 `[release]` 的 `main` 推送才自动发布，使用工作流中配置的默认版本（当前为 `1.5.0`）。发布附件包括安装版、便携版、Windows 源码 ZIP 和 SHA-256 校验值。
 发布新版本时应同时更新工作流默认版本和 `RELEASE_NOTES.md`，不要复用已经发布的版本号。
 仅在明确要求同版本重建时，在发布提交中同时添加 `[release] [rebuild]`，更新发布说明中的构建日期。
 工作流会在构建和安装自检通过后替换下载文件，并将轻量版本标签快进到对应源码提交；不允许回退或覆盖非祖先版本。
@@ -24,6 +24,10 @@ git push origin v1.0.0
 GitHub 构建使用 Python 3.12、官方 PyPI 和内置 Windows 环境，发布前检查真实 exe 的启动与报告导出。
 为了控制体积，此发布版本不下载 Chromium，浏览器兜底使用目标电脑上的 Edge/Chrome；PDF 使用内置引擎。
 构建测试文件只保留 3 天，正式安装包和便携包保存在 Releases。
+
+发布构建另生成程序更新清单 `program-update.json`，与安装包和便携包一起发布。
+只有使用发布脚本生成、带有版本和渠道标记的 Windows 软件会检查程序更新。
+仅调整站点无需重建 exe，配置版本和清单的维护步骤见[更新说明](docs/software-updates.md)。
 
 本地开发目录有旧历史或私人配置时，先运行 `python scripts/prepare_github_source.py`。
 它会生成 `.github-publish/GovPolicyWeekly` 干净发布目录并更新 Windows 源码 zip，不复制旧 `.git`、API Key 配置、输出报告或缓存。
@@ -47,7 +51,7 @@ build_windows.bat
 6. 生成可执行文件目录。
 7. 自动压缩出 `GovPolicyWeekly_windows_portable.zip`，这个 zip 可以传到其他 Windows 电脑解压运行。
 
-注意：旧版 Tkinter UI 保留在 `app.py`，旧版 Qt Widgets UI 保留在 `qt_app.py`。当前 Windows 打包入口是 `desktop_app.py`，使用带真实采集功能的 Qt Quick 玻璃界面，需要 PySide6 6.10 或更新的 6.x 版本。新入口及 QML、壁纸、图标和着色器已加入打包配置，但本次 macOS 本地检查不等于 Windows 实机验收，发布前必须在 Windows 构建并执行 exe 自检。
+注意：旧版 Tkinter UI 保留在 `app.py`，旧版 Qt Widgets UI 保留在 `qt_app.py`。当前 Windows 打包入口是 `desktop_app.py`，使用带真实采集功能的 Qt Quick 半圆周历工作台，需要 PySide6 6.10 或更新的 6.x 版本。新入口及 QML、配色脚本、地图、图标和着色器已加入打包配置，但本次 macOS 本地检查不等于 Windows 实机验收，发布前必须在 Windows 构建并执行 exe 自检。
 
 生成后运行：
 

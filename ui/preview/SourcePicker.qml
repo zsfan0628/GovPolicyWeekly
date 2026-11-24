@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "Pearl.js" as Pearl
 
 Item {
     id: control
@@ -17,14 +18,14 @@ Item {
     Keys.onSpacePressed: toggle()
     Keys.onReturnPressed: toggle()
     Rectangle {
-        anchors.fill: parent; color: "#ffffff"; radius: 6; border.width: 1
-        border.color: selector.visible || control.activeFocus ? "#4f8f6b" : trigger.containsMouse ? "#9caea1" : "#d6dfd8"
+        anchors.fill: parent; color: Pearl.soft; radius: 7; border.width: selector.visible || control.activeFocus || trigger.containsMouse ? 1 : 0
+        border.color: selector.visible || control.activeFocus ? Pearl.frame : trigger.containsMouse ? Pearl.frame : Pearl.line
         Icon { x: 12; anchors.verticalCenter: parent.verticalCenter; name: "globe"; width: 17; height: 17 }
         Text {
-            x: 40; anchors.verticalCenter: parent.verticalCenter; font.pixelSize: 13; color: "#26322b"
-            text: sources.selectedCount === sources.total ? "全部站点" : sources.selectedCount === 0 ? "未选择站点" : "自定义站点"
+            x: 40; anchors.verticalCenter: parent.verticalCenter; font.pixelSize: 15; font.weight:Font.DemiBold; color: Pearl.ink
+            text: "采集站点"
         }
-        Text { anchors.right: arrow.left; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: sources.selectedCount + " / " + sources.total; color: "#636763"; font.pixelSize: 12 }
+        Text { anchors.right: arrow.left; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: (sources.selectedCount===sources.total ? "全部 " : "已选 ") + sources.selectedCount + " 个站点"; color: Pearl.muted; font.pixelSize: 12 }
         Icon {
             id: arrow; anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
             name: "chevron-down"; width: 14; height: 14; rotation: selector.visible ? 180 : 0
@@ -57,12 +58,12 @@ Item {
                 TextField {
                     id: sourceSearch; objectName: "sourceSearch"
                     anchors { left: parent.left; leftMargin: 43; right: parent.right; rightMargin: 14; verticalCenter: parent.verticalCenter }
-                    height: 38; padding: 0; color: "#262726"; font.pixelSize: 13; placeholderText: "搜索站点、地区或部门"; placeholderTextColor: "#707470"
+                    height: 38; padding: 0; color: Pearl.ink; font.pixelSize: 13; placeholderText: "搜索站点、地区或部门"; placeholderTextColor: Pearl.muted
                     background: Item {}
                     onTextChanged: sourceFilter.query = text
                 }
             }
-            Rectangle { Layout.fillWidth: true; height: 1; color: "#e5ece5" }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Pearl.line }
             RowLayout {
                 Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16; Layout.preferredHeight: 44
                 CheckControl {
@@ -72,7 +73,7 @@ Item {
                     onClicked: sources.selectAll(sources.selectedCount !== sources.total)
                 }
                 Item { Layout.fillWidth: true }
-                Text { text: "已选 " + sources.selectedCount + " 个"; color: "#5a5d5a"; font.pixelSize: 12 }
+                Text { text: "已选 " + sources.selectedCount + " 个"; color: Pearl.muted; font.pixelSize: 12 }
                 AppButton { text: "清空"; compact: true; tone: "ghost"; onClicked: sources.selectAll(false) }
             }
             ListView {
@@ -85,28 +86,28 @@ Item {
                 section.delegate: Item {
                     required property string section
                     width: list.width; height: 31
-                    Text { x: 16; anchors.verticalCenter: parent.verticalCenter; text: section === "国家" ? "国家部委" : section; color: "#6a6d6a"; font.pixelSize: 11; font.weight: Font.DemiBold }
+                    Text { x: 16; anchors.verticalCenter: parent.verticalCenter; text: section === "国家" ? "国家部委" : section; color: Pearl.muted; font.pixelSize: 11; font.weight: Font.DemiBold }
                 }
                 delegate: Item {
                     required property int siteId
                     required property string siteName
                     required property bool selected
                     width: list.width; height: 37
-                    Rectangle { anchors.fill: parent; anchors.leftMargin: 6; anchors.rightMargin: 6; radius: 5; color: rowMouse.containsMouse ? "#e6ede6" : "transparent" }
+                    Rectangle { anchors.fill: parent; anchors.leftMargin: 6; anchors.rightMargin: 6; radius: 5; color: rowMouse.containsMouse ? Pearl.line : "transparent" }
                     Rectangle {
                         x: 17; y: 11; width: 15; height: 15; radius: 4; border.width: 1
-                        color: selected ? "#39835d" : "transparent"; border.color: selected ? "#39835d" : "#a5b0a8"
+                        color: selected ? Pearl.accent : "transparent"; border.color: selected ? Pearl.accent : Pearl.frame
                         Icon { anchors.centerIn: parent; width: 11; height: 11; name: "check"; visible: selected; tint: "#ffffff" }
                     }
-                    Text { x: 43; anchors.verticalCenter: parent.verticalCenter; width: parent.width - 63; text: siteName; color: "#333533"; font.pixelSize: 13; elide: Text.ElideRight }
+                    Text { x: 43; anchors.verticalCenter: parent.verticalCenter; width: parent.width - 63; text: siteName; color: Pearl.ink; font.pixelSize: 13; elide: Text.ElideRight }
                     MouseArea { id: rowMouse; objectName: "siteRow" + parent.siteId; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: sources.toggle(parent.siteId) }
                 }
-                Text { anchors.centerIn: parent; text: "没有匹配的站点"; color: "#68776c"; font.pixelSize: 13; visible: list.count === 0 }
+                Text { anchors.centerIn: parent; text: "没有匹配的站点"; color: Pearl.muted; font.pixelSize: 13; visible: list.count === 0 }
             }
-            Rectangle { Layout.fillWidth: true; height: 1; color: "#e5ece5" }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Pearl.line }
             RowLayout {
                 Layout.fillWidth: true; Layout.preferredHeight: 40; Layout.leftMargin: 16; Layout.rightMargin: 12
-                Text { text: "国家部委 / 江苏 / 湖北 / 黑龙江 / 南通"; color: "#6d706d"; font.pixelSize: 11; Layout.fillWidth: true }
+                Text { text: Object.keys(sources.regionCounts).join(" / "); elide: Text.ElideRight; color: Pearl.muted; font.pixelSize: 11; Layout.fillWidth: true }
                 AppButton { text: "完成"; compact: true; tone: "ghost"; onClicked: selector.close() }
             }
         }

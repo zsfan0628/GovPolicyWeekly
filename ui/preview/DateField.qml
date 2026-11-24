@@ -1,3 +1,4 @@
+import "Pearl.js" as Pearl
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -34,9 +35,9 @@ Item {
         anchors.fill: parent
         radius: 6; color: "#ffffff"
         border.width: 1
-        border.color: calendar.visible || control.activeFocus ? "#4f8f6b" : trigger.containsMouse ? "#9caea1" : "#d6dfd8"
+        border.color: calendar.visible || control.activeFocus ? Pearl.frame : trigger.containsMouse ? Pearl.frame : Pearl.line
         Icon { x: 11; anchors.verticalCenter: parent.verticalCenter; name: "calendar-days"; width: 16; height: 16 }
-        Text { x: 37; anchors.verticalCenter: parent.verticalCenter; text: control.value; color: "#26322b"; font.pixelSize: 13 }
+        Text { x: 37; anchors.verticalCenter: parent.verticalCenter; text: control.value; color: Pearl.ink; font.pixelSize: 13 }
         Icon {
             anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter
             name: "chevron-down"; width: 14; height: 14
@@ -70,7 +71,7 @@ Item {
             spacing: 7
             RowLayout {
                 Layout.fillWidth: true
-                Text { text: control.viewYear + " 年 " + (control.viewMonth + 1) + " 月"; color: "#272827"; font.pixelSize: 14; Layout.fillWidth: true }
+                Text { text: control.viewYear + " 年 " + (control.viewMonth + 1) + " 月"; color: Pearl.ink; font.pixelSize: 14; Layout.fillWidth: true }
                 AppButton { objectName: control.objectName + "Previous"; iconName: "chevron-left"; compact: true; tone: "ghost"; hint: "上个月"; onClicked: control.shiftMonth(-1) }
                 AppButton { objectName: control.objectName + "Next"; iconName: "chevron-right"; compact: true; tone: "ghost"; hint: "下个月"; onClicked: control.shiftMonth(1) }
             }
@@ -79,7 +80,7 @@ Item {
                 Layout.fillWidth: true
                 Repeater {
                     model: ["一", "二", "三", "四", "五", "六", "日"]
-                    Text { required property string modelData; text: modelData; color: "#7a7d7a"; font.pixelSize: 11; horizontalAlignment: Text.AlignHCenter; Layout.fillWidth: true; Layout.preferredHeight: 23 }
+                    Text { required property string modelData; text: modelData; color: Pearl.muted; font.pixelSize: 11; horizontalAlignment: Text.AlignHCenter; Layout.fillWidth: true; Layout.preferredHeight: 23 }
                 }
                 Repeater {
                     model: 42
@@ -91,13 +92,13 @@ Item {
                         Layout.fillWidth: true; Layout.preferredHeight: 28
                         Rectangle {
                             anchors.centerIn: parent; width: 29; height: 27; radius: 5
-                            color: parent.selected ? "#267451" : dayMouse.containsMouse ? "#e4ebe4" : "transparent"
+                            color: parent.selected ? Pearl.accent : dayMouse.containsMouse ? Pearl.soft : "transparent"
                             border.width: !parent.selected && control.format(parent.day) === control.format(new Date()) ? 1 : 0
-                            border.color: "#7a7e7a"
+                            border.color: Pearl.muted
                         }
                         Text {
                             anchors.centerIn: parent; text: parent.day.getDate(); font.pixelSize: 12
-                            color: parent.selected ? "#ffffff" : parent.day.getMonth() === control.viewMonth ? "#26322b" : "#a2aca5"
+                            color: parent.selected ? "#ffffff" : parent.day.getMonth() === control.viewMonth ? Pearl.ink : Pearl.frame
                         }
                         MouseArea {
                             id: dayMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
@@ -107,7 +108,7 @@ Item {
                 }
             }
             Item { Layout.fillHeight: true }
-            Rectangle { Layout.fillWidth: true; height: 1; color: "#e5ece5" }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Pearl.line }
             AppButton { text: "今天"; tone: "ghost"; compact: true; Layout.alignment: Qt.AlignHCenter; onClicked: { control.value = control.format(new Date()); calendar.close() } }
         }
     }

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from gov_report.config import load_keywords, load_sources
-from gov_report.crawler import GovCrawler, read_manual_urls, dedupe_records
+from gov_report.crawler import GovCrawler, read_manual_urls, dedupe_records, mark_same_text_sources
 from gov_report.date_utils import resolve_date_range
 from gov_report.report import export_all
 from gov_report.task_state import TaskState, task_lock
@@ -32,11 +34,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--workers", type=int, choices=range(1, 7), default=3, help="同时采集的站点数，默认3；同一站点仍顺序访问")
     p.add_argument("--full-scan", action="store_true", help="维护模式：完整入口清单，不按日期停止翻页")
     p.add_argument("--no-cache", action="store_true", help="关闭正文和模型判断缓存，用于核对采集结果")
+    p.add_argument("--verify-dates", action="store_true", help="对已发现的文章候选不只凭列表日期跳过，进一步核对详情")
     p.add_argument("--cache-dir", type=str, default=None, help="跨日期范围共享的缓存目录，默认输出根目录下的 .cache")
     p.add_argument("--sleep", type=float, default=0.5, help="每次请求之间的间隔秒数")
     p.add_argument("--no-verify-ssl", action="store_true", help="关闭SSL证书校验，少数旧政府网站证书异常时可用")
     p.add_argument("--loose", action="store_true", help="宽松模式：接近旧版，会议/动态类也可能被收录；默认是严格模式")
-    p.add_argument("--no-llm", action="store_true", help="关闭 GPT-5.5 复判；默认在 llm_config.py 填写 API_KEY 后启用")
+    p.add_argument("--no-llm", action="store_true", help="关闭所选大模型复判")
     p.add_argument("--browser-fallback", action="store_true", default=True, help="遇到403/412/重定向异常时，尝试用 Playwright 浏览器方式读取。v5.2默认启用。需另行安装 playwright。")
     p.add_argument("--no-browser-fallback", action="store_true", help="关闭 Playwright 浏览器兜底读取。")
     p.add_argument("--allow-rule-fallback", action="store_true", help="当GPT未启用时，允许模糊候选按规则兜底通过。默认关闭，避免半信半疑内容进入报告。")
@@ -85,6 +88,9 @@ def run_collection(args) -> None:
     if args.resume_task and not prior:
         raise ValueError("任务文件缺少元数据，不能恢复")
     manual_urls = read_manual_urls(args.manual_urls)
+    if prior:
+        args.verify_dates = bool(prior.get("verify_dates", False))
+        args.no_cache = args.no_cache or bool(prior.get("no_cache", False))
     out_dir = Path(prior["output_dir"]) if prior else Path(args.output_root) / f"{start:%Y-%m-%d}_至_{end:%Y-%m-%d}" / ("task-" + uuid.uuid4().hex[:12])
     out_dir.mkdir(parents=True, exist_ok=True)
     state_path = state_path or out_dir / "task.sqlite3"
@@ -93,7 +99,22 @@ def run_collection(args) -> None:
                     allow_rule_fallback=args.allow_rule_fallback, use_llm=not args.no_llm,
                     max_channels=args.max_channels_per_source, max_detail=args.max_detail_per_source,
                     manual_urls=manual_urls, output_dir=str(out_dir.absolute()))
+    if args.verify_dates:
+        metadata["verify_dates"] = True
+    if (not prior and args.no_cache) or (prior and prior.get("no_cache")):
+        metadata["no_cache"] = True
     task = TaskState(state_path, metadata)
+    before = task.statuses()
+    attempt_id = uuid.uuid4().hex
+    attempt_dir = out_dir / "attempts" / attempt_id
+    attempt_dir.mkdir(parents=True)
+    attempt = {"started_at": datetime.now(timezone.utc).isoformat(), "attempt_id": attempt_id,
+               "mode": args.retry_mode if prior else "new"}
+    (attempt_dir / "started.json").write_text(json.dumps(attempt, indent=2), encoding="utf-8")
+    if prior:
+        for filename in ("crawl_log.txt", "runtime_summary.json", "coverage_summary.json", "attachment_downloads.json"):
+            if (out_dir / filename).is_file():
+                shutil.copy2(out_dir / filename, attempt_dir / ("previous_" + filename))
     progress({"event": "task_ready", "path": str(state_path.absolute()), "summary": task.summary()})
 
     print(f"统计周期：{start:%Y-%m-%d %H:%M:%S} 至 {end:%Y-%m-%d %H:%M:%S}")
@@ -118,6 +139,7 @@ def run_collection(args) -> None:
         cache_dir=args.cache_dir or Path(args.output_root) / ".cache",
         use_cache=not args.no_cache,
         task_state=task,
+        verify_dates=args.verify_dates,
     )
 
     if args.retry_mode == "llm":
@@ -130,11 +152,19 @@ def run_collection(args) -> None:
         records.extend(crawler.crawl_manual_urls(manual_urls, start, end))
     records = task.records()
     coverage = task.summary()
+    new_columns = [dict(source=name, url=url, **p) for name, url, p in task.rows("column_review")]
+    (out_dir / "column_review.json").write_text(json.dumps(new_columns, ensure_ascii=False, indent=2), encoding="utf-8")
+    attachment_candidates = [dict(source=name, url=url, title=p.get("item", {}).get("title", ""),
+                                  column=p.get("column", ""), list_date=p.get("item", {}).get("publish_date"),
+                                  reason=p.get("reason", "附件内容未解析"))
+                             for name, url, p in task.rows("candidate") if p.get("status") == "skipped_attachment"]
+    (out_dir / "attachment_candidates.json").write_text(json.dumps(attachment_candidates, ensure_ascii=False, indent=2), encoding="utf-8")
     (out_dir / "coverage_summary.json").write_text(json.dumps(coverage, ensure_ascii=False, indent=2), encoding="utf-8")
     progress({"event": "coverage", "summary": coverage})
 
     # 再去重一次：同时按规范化URL、标题+日期+来源、正文hash去重。
     records = dedupe_records(records)
+    mark_same_text_sources(records)
     records = sorted(records, key=lambda x: (x.get("publish_date", ""), x.get("source_name", "")), reverse=True)
 
     progress({"event": "export_started", "record_count": len(records)})
@@ -152,6 +182,9 @@ def run_collection(args) -> None:
     elapsed = time.perf_counter() - run_start_ts
     elapsed_text = format_duration(elapsed)
     runtime_info = {
+        **attempt, "finished_at": datetime.now(timezone.utc).isoformat(),
+        "cache_enabled": not args.no_cache, "candidate_outcomes": coverage["counts"],
+        "included_before_deduplication": coverage["counts"]["included"],
         "elapsed_seconds": round(elapsed, 3),
         "elapsed_text": elapsed_text,
         "record_count": len(records),
@@ -167,6 +200,12 @@ def run_collection(args) -> None:
     (out_dir / "runtime_summary.json").write_text(json.dumps(runtime_info, ensure_ascii=False, indent=2), encoding="utf-8")
     with (out_dir / "crawl_log.txt").open("a", encoding="utf-8") as f:
         f.write(f"\n程序运行总时长：{elapsed_text}（{elapsed:.3f} 秒）\n")
+    after = task.statuses()
+    changes = [dict(kind=k[0], source=k[1], url=k[2], previous=before.get(k), current=status)
+               for k, status in after.items() if before.get(k) != status]
+    (attempt_dir / "changes.json").write_text(json.dumps(changes, ensure_ascii=False, indent=2), encoding="utf-8")
+    for filename in ("crawl_log.txt", "runtime_summary.json"):
+        shutil.copy2(out_dir / filename, attempt_dir / filename)
 
     print("\n生成完成：")
     for k, v in paths.items():

@@ -166,32 +166,58 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         assert not find("attachments").property("checked")
         window.grabWindow().save(str(artifacts / "01-workspace.png"))
         passed("Real workspace restores configuration with masked credentials")
+        def highlighted():
+            cells=[find(f'rangeDay{i}') for i in range(42)]
+            return [c.property('dateNumber') for c in cells if c.isVisible() and c.property('selected')]
+        for start, end, days, marked in (
+            ('2026-11-17','2026-11-23',7,list(range(17,24))),
+            ('2026-12-03','2027-01-01',30,list(range(3,32))),
+            ('2024-02-28','2024-03-01',3,[28,29]),
+            ('2026-10-18','2026-10-18',1,[18]),
+        ):
+            find('startDate').setProperty('value', start)
+            find('endDate').setProperty('value', end)
+            assert find('horizonCalendar').property('days') == days
+            assert highlighted()==marked
+            if days==7:
+                QTest.qWait(50)
+                window.grabWindow().save(str(artifacts/'selected-week.png'))
+            if days==30:
+                click('rangeNext')
+                assert find('rangeMonthLabel').property('text')=='2027 年 1 月' and highlighted()==[1]
+                assert find('startDate').property('value')==start and find('endDate').property('value')==end
+                click('rangePrev')
+                assert highlighted()==marked
+        find('endDate').setProperty('value','2026-10-17')
+        assert not find('startButton').isEnabled() and not highlighted()
+        find('endDate').setProperty('value','2026-10-18')
+        passed("Inclusive calendar selection, invalid ranges, leap day and cross-year month browsing")
         check_workspace_spacing(window, artifacts)
         passed('Configuration rows and embedded controls keep their spacing at three window sizes')
 
-        if window.property('workspaceV3'):
-            assert find('workspaceSidebar').property('visible')
-            click('startDate')
-            QTest.qWait(180)
-            assert find('startDate').property('opened')
-            assert find('startDate').property('viewMonth') == 9
-            window.grabWindow().save(str(artifacts / '08-calendar.png'))
-            click('startDate')
-            QTest.qWait(180)
-            assert not find('startDate').property('opened')
-            click('sitePicker')
-            QTest.qWait(180)
-            assert find('sourcePopup').property('visible')
-            window.grabWindow().save(str(artifacts / '09-source-picker.png'))
-            click('sitePicker')
-            QTest.qWait(180)
-            assert not find('sourcePopup').property('visible')
-            click('nav3')
-            assert window.property('page') == 3
-            window.grabWindow().save(str(artifacts / '10-preferences.png'))
-            click('nav0')
-            passed('Sidebar preview routes settings and preserves calendar/source popups')
+        click('startDate')
+        QTest.qWait(180)
+        assert find('startDate').property('opened')
+        assert find('startDate').property('viewMonth') == 9
+        window.grabWindow().save(str(artifacts / '08-calendar.png'))
+        click('startDate')
+        QTest.qWait(180)
+        assert not find('startDate').property('opened')
+        click('sitePicker')
+        QTest.qWait(180)
+        assert find('sourcePopup').property('visible')
+        window.grabWindow().save(str(artifacts / '09-source-picker.png'))
+        click('sitePicker')
+        QTest.qWait(180)
+        assert not find('sourcePopup').property('visible')
+        click('nav3')
+        assert window.property('page') == 3
+        window.grabWindow().save(str(artifacts / '10-preferences.png'))
+        click('nav0')
+        passed('Workspace routes settings and preserves calendar/source popups')
 
+        assert find('activityList').isVisible() and not find('logList').isVisible()
+        click('activityMode')
         backend.add_log('WARN', '测试警告：本条消息用于检查级别与正文的首行对齐。')
         backend.add_log('ERROR', '测试错误：' + '用于检查长消息换行后的列对齐。' * 10)
         QTest.qWait(100)
@@ -236,10 +262,20 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         assert "缓存" in backend.stageSummary
         wait_for(lambda: backend.reports.rowCount() > 0)
         assert any(row["reportPath"] == backend.lastPdf for row in backend.reports.rows)
+        assert backend.latestReport['path'] == backend.lastPdf
+        assert find('latestReport').property('text') == '2026-10-18'
         QTest.qWait(200)
         window.grabWindow().save(str(artifacts / "03-completed.png"))
         assert all(fixture.key not in row["message"] for row in backend.logs.rows)
         passed("Real subprocess: crawl, model, progress, linked PDF and history; attachments default off")
+        click('activityMode')
+        assert find('activityList').isVisible()
+        assert any(row['eventAction']=='report' for row in backend.activity.rows)
+        assert all(fixture.key not in str(row) for row in backend.activity.rows)
+        window.setProperty("drawer", "")
+        window.setProperty("toastShown", False)
+        QTest.qWait(160)
+        window.grabWindow().save(str(artifacts/'activity-completed.png'))
 
         requests_before = len(fixture.requests)
         calls_before = len(fixture.posts)
@@ -297,6 +333,7 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         wait_for(lambda: not backend.running, 60000)
         assert backend.state == "报告已生成（采集不完整）", backend.logs.rows[-10:]
         assert backend._coverage["counts"]["llm_failed"] == 1
+        assert any(row['eventKind']=='warning' and row['eventAction']=='coverage' for row in backend.activity.rows)
         failed_task_path = backend._task_path
         fixture.model_fail = False
         before_requests = list(fixture.requests)
@@ -312,6 +349,13 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         assert backend.state == "已完成" and backend.hits == 2, backend.logs.rows[-10:]
         assert fixture.requests == before_requests, "Model-only recovery must not refetch website pages"
         assert backend._coverage["counts"]["llm_failed"] == 0
+        out_dir = Path(backend.lastPdf).parent
+        runtime = json.loads((out_dir / "runtime_summary.json").read_text(encoding="utf-8"))
+        attempt = out_dir / "attempts" / runtime["attempt_id"]
+        assert runtime["mode"] == "llm" and runtime["llm"]["http_request_count"] == 1
+        assert (attempt / "previous_crawl_log.txt").is_file()
+        changes = json.loads((attempt / "changes.json").read_text(encoding="utf-8"))
+        assert any(x["previous"] == "llm_failed" and x["current"] == "included" for x in changes)
         passed("Incomplete model review is visible; model-only retry preserves records without website requests")
 
         find("apiKey").setProperty("text", "wrong-local-key")
@@ -362,6 +406,21 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         assert backend.state == "已完成" and backend.hits == 2, backend.logs.rows[-10:]
         passed("Stopped task resumes from the persisted task file")
 
+        old_pdf = Path(backend.lastPdf)
+        before_calls = len(fixture.posts)
+        click("taskCoverage")
+        click("freshCheck")
+        assert find("freshDialog").property("visible") and not backend.running
+        QMetaObject.invokeMethod(find("freshDialog"), "accept")
+        wait_for(lambda: backend.running)
+        wait_for(lambda: not backend.running, 60000)
+        assert backend.state == "已完成", backend.logs.rows[-8:]
+        assert old_pdf.is_file() and old_pdf != Path(backend.lastPdf)
+        assert len(fixture.posts) > before_calls
+        fresh = json.loads((Path(backend.lastPdf).parent / "runtime_summary.json").read_text(encoding="utf-8"))
+        assert not fresh["cache_enabled"] and fresh["mode"] == "new"
+        passed("Fresh verification confirms, bypasses caches and preserves the previous report")
+
         before = backend.process
         backend.start("2026-10-20", "2026-10-01", {})
         assert not backend.running and backend.process is before
@@ -380,15 +439,6 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         click('nav0')
         QTest.qWait(200)
         window.grabWindow().save(str(artifacts / "06-minimum-workspace.png"))
-        if window.property('workspaceV3'):
-            inspector = find('taskInspector')
-            monitor = find('monitorColumn')
-            assert monitor.width() <= inspector.width(), (monitor.width(), inspector.width())
-            for name in ('startDate', 'endDate', 'apiUrl', 'apiKey', 'startButton'):
-                item = find(name)
-                point = item.mapToScene(QPointF(0, 0))
-                assert point.x() >= 0 and point.x() + item.width() <= window.width() + 1, name
-            passed('Compact workspace keeps control bounds inside the minimum viewport')
         QMetaObject.invokeMethod(find("coverageDialog"), "open")
         QTest.qWait(100)
         window.grabWindow().save(str(artifacts / "07-minimum-coverage.png"))

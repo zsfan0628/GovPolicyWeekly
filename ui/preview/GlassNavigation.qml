@@ -18,7 +18,7 @@ Item {
         objectName: "navigationLens"
         x: 6 + navigation.currentIndex * navigation.segmentWidth
         y: 6; width: navigation.segmentWidth; height: navigation.height - 12
-        color: Pearl.soft; radius: 6
+        color: Pearl.soft; radius: height / 2; antialiasing: true
         Behavior on x { enabled: !navigation.reducedMotion; SpringAnimation { spring: 5; damping: 0.38; mass: 0.9; epsilon: 0.15 } }
     }
     HoverHandler { id: hover }
@@ -33,10 +33,17 @@ Item {
                 readonly property bool active: navigation.currentIndex === index
                 objectName: "nav" + index
                 width: navigation.segmentWidth; height: navigation.height - 12
+                padding: 0
+                topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0
                 hoverEnabled: true
+                focusPolicy: Qt.StrongFocus
                 Accessible.name: ["采集任务", "站点管理", "历史报告", "设置"][index]
                 onClicked: navigation.chosen(index)
-                background: Rectangle { radius: height / 2; color: nav.hovered && !nav.active ? "#22ffffff" : "transparent"; border.width: nav.activeFocus ? 1 : 0; border.color: Pearl.accent }
+                background: Rectangle {
+                    radius: lens.radius; antialiasing: true
+                    color: nav.hovered && !nav.active ? "#22ffffff" : "transparent"
+                    border.width: nav.visualFocus ? 1 : 0; border.color: Pearl.accent
+                }
                 contentItem: Item {
                     Row {
                         anchors.centerIn: parent; spacing: 7

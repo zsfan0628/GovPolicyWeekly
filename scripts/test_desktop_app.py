@@ -164,6 +164,7 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         assert find("apiKey").property("keyHidden")
         assert find("requestInterval").property("value") == 0
         assert not find("attachments").property("checked")
+        assert not find("limitDateRequests").property("checked")
         window.grabWindow().save(str(artifacts / "01-workspace.png"))
         passed("Real workspace restores configuration with masked credentials")
         def highlighted():
@@ -241,6 +242,9 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         assert "/models" in fixture.requests and "/v1/models" in fixture.requests
         assert not any("演示模型" in name for name in backend.modelOptions)
         find("modelBox").setProperty("currentIndex", 0)
+        click("limitDateRequests")
+        assert find("dateRequestLimit").isVisible()
+        find("dateRequestLimit").setProperty("value", 0)
         click("startButton")
         wait_for(lambda: backend.running)
         window.grabWindow().save(str(artifacts / "02-running.png"))
@@ -258,6 +262,8 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         assert summary["workers"] == 3 and summary["stages"]["list"]["count"] >= 2
         assert summary["stages"]["detail"]["count"] == 2
         assert summary["llm"]["success_count"] == 1 and summary["llm"]["failure_count"] == 0
+        assert summary["llm"]["date_request_budget"] == 0 and summary["llm"]["date_request_used"] == 0
+        passed("Desktop date-request limit reaches the real task; zero still allows content review")
         assert "/files/attachment.pdf" not in fixture.requests
         assert "缓存" in backend.stageSummary
         wait_for(lambda: backend.reports.rowCount() > 0)

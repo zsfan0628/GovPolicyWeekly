@@ -21,8 +21,8 @@ Button {
              : control.tone === "danger" ? (control.hovered ? "#f6dddd" : "#f9ecec")
              : control.tone === "ghost" ? (control.hovered ? "#140d3421" : "transparent")
              : control.hovered ? Pearl.soft : "#ffffff"
-        border.width: control.activeFocus ? 1 : (control.tone === "default" ? 1 : 0)
-        border.color: control.activeFocus ? Pearl.accent : Pearl.line
+        border.width: control.visualFocus || control.tone === "default" ? 1 : 0
+        border.color: control.visualFocus ? Pearl.accent : Pearl.line
         Behavior on color { ColorAnimation { duration: 100 } }
     }
     contentItem: Item {

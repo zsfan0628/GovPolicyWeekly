@@ -144,6 +144,5 @@ class RetrievalQualityTests(unittest.TestCase):
                                             '<h1>职务任免通知</h1>经研究决定，任命张某为主任。</article>', self.url)
         w.process_candidate(self.source,item,self.start,self.end)
         w.client.fetch_text.assert_called_once_with(self.url)
-        record = task.records()[0]
-        self.assertTrue(record['date_conflict'])
-        self.assertEqual(record['date_source'], '发布元数据')
+        self.assertFalse(task.records())
+        self.assertEqual(task.get("candidate","fixture",self.url)["failure_kind"],"date_conflict")

@@ -10,8 +10,8 @@ TabButton {
     background: Rectangle {
         radius: 5
         color: control.checked ? "#ffffff" : control.hovered ? Pearl.soft : "transparent"
-        border.width: control.checked || control.activeFocus ? 1 : 0
-        border.color: control.activeFocus ? Pearl.accent : Pearl.line
+        border.width: control.checked || control.visualFocus ? 1 : 0
+        border.color: control.visualFocus ? Pearl.accent : Pearl.line
     }
     contentItem: Text {
         text: control.text; font.pixelSize: 12; color: Pearl.active

@@ -4,7 +4,7 @@ import ast
 import json
 import re
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urljoin, urlparse, urldefrag, urlencode, parse_qsl
 
@@ -96,6 +96,7 @@ class LinkItem:
     pinned: bool = False
     in_navigation: bool = False
     list_date_conflict: bool = False
+    list_dates: tuple[str, ...] = ()
 
 
 @dataclass
@@ -106,6 +107,7 @@ class Article:
     text: str
     attachments: list[dict[str, str]]
     date_source: str = ""
+    date_evidence: list[dict[str, str]] = field(default_factory=list)
 
 
 def clean_text(text: str) -> str:
@@ -281,7 +283,7 @@ def extract_links(html: str, base_url: str, only_same_site: bool = True, *, _sou
                 parsed = parse_cn_date(raw)
                 if parsed:
                     date_nodes.append((node, parsed, raw))
-        date = date_nodes[0][1] if date_nodes else parse_cn_date(parent_text + " " + title + " " + url)
+        date = date_nodes[0][1] if date_nodes else explicit_day(parent_text + " " + title + " " + url)
         for node, _, raw in date_nodes:
             if node.find_parent("a") is a:
                 title = re.sub(r"\s*" + re.escape(raw) + r"$", "", title).strip()
@@ -421,10 +423,11 @@ def extract_article(html: str, url: str, fallback_title: str | None = None, sour
 
     all_text = clean_text(soup.get_text("\n", strip=True))
     title = extract_title(soup, fallback_title=fallback_title, source_name=source_name)
-    publish_date, date_source = publication_evidence(soup, all_text, url)
+    evidence = collect_date_evidence(soup, title, fallback_title)
+    publish_date, date_source = publication_evidence(soup, all_text, url, evidence)
     text = extract_main_text(soup)
     attachments = extract_attachments(soup, url)
-    return Article(title=title, url=url, publish_date=publish_date, text=text, attachments=attachments, date_source=date_source)
+    return Article(title, url, publish_date, text, attachments, date_source, evidence)
 
 
 def extract_title(soup: BeautifulSoup, fallback_title: str | None = None, source_name: str | None = None) -> str:
@@ -480,6 +483,8 @@ def extract_title(soup: BeautifulSoup, fallback_title: str | None = None, source
 
 def clean_title(title: str) -> str:
     t = clean_text(title)
+    t = re.split(r"<meta\b", t, maxsplit=1, flags=re.I)[0]
+    t = re.sub(r"<br\s*/?>", " ", t, flags=re.I)
     # 去掉常见站点后缀，但不要把“——”副标题误删。
     t = re.sub(r"[\-_]\s*(?:中华人民共和国|江苏省|湖北省|黑龙江省|南通市).{0,20}(?:厅|局|部|委员会|政府).*$", "", t).strip()
     t = re.sub(r"\s+", " ", t)
@@ -504,12 +509,71 @@ def extract_publish_date(soup: BeautifulSoup, all_text: str, url: str):
     return publication_evidence(soup, all_text, url)[0]
 
 
-def publication_evidence(soup: BeautifulSoup, all_text: str, url: str):
-    date_names = {"pubdate", "publishdate", "articletime", "articlepubdate", "articlepublishtime",
+DATE_NAMES = {"pubdate", "publishdate", "articletime", "articlepubdate", "articlepublishtime",
                   "article:published_time", "dcext.pubdate", "dcsext.pubdate", "dc.date", "pubtime", "datepublished"}
+DAY = r"20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}(?!\d)日?"
+FULL_DAY = re.compile(rf"(?<!\d)(?:{DAY}|20\d{{6}}(?!\d))")
+
+
+def explicit_day(raw):
+    # A year-only directory such as /xxgk2018/ is not January 1st, 2018.
+    return next((d for m in FULL_DAY.finditer(raw) if (d := parse_cn_date(m[0]))), None)
+
+
+def collect_date_evidence(soup, title, fallback_title=None):
+    """Keep visible citations separate from CMS metadata, document dates and deadlines."""
+    result = []
+    def add(kind, raw, quote):
+        dt = parse_cn_date(raw)
+        if dt:
+            row = dict(kind=kind, date=dt.date().isoformat(), quote=" ".join(quote.split())[:180])
+            if row not in result:
+                result.append(row)
+    lines = (soup.body or soup).get_text("\n", strip=True).splitlines()
+    heading = soup.find("h1")
+    titles = {clean_title(v) for v in (title, fallback_title, heading.get_text(" ",strip=True) if heading else "")
+              if v and is_valid_title(v) and len(v)<=250}
+    for i, line in enumerate(lines):
+        if len(line)>300 or clean_title(line) not in titles:
+            continue
+        after = " ".join(lines[i+1:i+12])[:300]
+        header = (re.match(rf"(?:(?:发布日期|发布时间|日期|时间)\s*[:：]\s*)?({DAY})(?:\s+\d{{1,2}}:\d{{2}}(?::\d{{2}})?)?\s*(?:信息来源|文章来源|来源)\s*[:：]", after)
+                  or re.match(rf"(?:发布日期|发布时间)\s*[:：]\s*({DAY})",after))
+        if header:
+            add("标题栏发布日期",header[1],after[:header.end()+24])
+            break
     for meta in soup.find_all("meta"):
-        if (meta.get("name") or meta.get("property") or "").lower() in date_names:
-            published = parse_cn_date(meta.get("content", ""))
+        if len(result)>=6:
+            break
+        key = meta.get("name") or meta.get("property") or ""
+        value = meta.get("content", "")
+        if key.lower() in DATE_NAMES and (dt := explicit_day(value)):
+            add("发布元数据",dt.date().isoformat(),key+": "+value)
+    # Only bounded article snippets go to the model; never send page HTML or credentials.
+    main = soup.select_one("article, .TRS_Editor, .article-content, #zoom, main") or soup.body or soup
+    text = " ".join(main.stripped_strings)[:3500]
+    for m in re.finditer(DAY,text):
+        if len(result)>=12:
+            break
+        prefix=re.split(r"[。；！？]",text[max(0,m.start()-42):m.start()])[-1]
+        suffix=re.split(r"[。；！？]",text[m.end():m.end()+26])[0]
+        kind = ("期限线索" if re.search(r"截止|截至|反馈期限|生效日期|实施日期|施行日期",prefix[-12:]) or re.match(r"\s*(?:日?前|之前|起施行|起实施|起生效)",suffix)
+                else "发文日期" if re.search(r"(?:成文|发文)日期\s*[:：]?\s*$",prefix)
+                else "更新日期" if re.search(r"更新(?:时间|日期)\s*[:：]?\s*$",prefix)
+                else "正文日期线索")
+        add(kind,m[0],prefix+m[0]+suffix)
+    return result
+
+
+def publication_evidence(soup: BeautifulSoup, all_text: str, url: str, evidence=None):
+    if evidence is None:
+        evidence = collect_date_evidence(soup, extract_title(soup))
+    for row in evidence:
+        if row["kind"]=="标题栏发布日期":
+            return parse_cn_date(row["date"]),row["kind"]
+    for meta in soup.find_all("meta"):
+        if (meta.get("name") or meta.get("property") or "").lower() in DATE_NAMES:
+            published = explicit_day(meta.get("content", ""))
             if published:
                 return published, "发布元数据"
     # 优先匹配“发布时间/发布日期/时间/日期”附近的日期。
@@ -526,7 +590,7 @@ def publication_evidence(soup: BeautifulSoup, all_text: str, url: str):
             dt = parse_cn_date(m.group(1))
             if dt:
                 return dt, label
-    return parse_cn_date(url), "网址日期线索"
+    return explicit_day(url), "网址日期线索"
 
 
 def extract_main_text(soup: BeautifulSoup) -> str:

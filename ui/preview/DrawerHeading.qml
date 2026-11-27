@@ -16,7 +16,7 @@ AbstractButton {
     Accessible.name: label + "：" + summary
     Accessible.checkable: true
     Accessible.checked: expanded
-    background: Rectangle { color: control.fill; radius: 7; border.width:control.activeFocus || control.expanded || control.hovered ? 1 : 0; border.color:Pearl.frame }
+    background: Rectangle { color: control.fill; radius: 7; border.width:control.visualFocus || control.expanded || control.hovered ? 1 : 0; border.color:control.visualFocus ? Pearl.accent : Pearl.frame }
     contentItem: RowLayout {
         spacing:10
         Icon { Layout.leftMargin:12; name:control.symbol; tint:Pearl.muted; width:17; height:17 }

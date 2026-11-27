@@ -32,6 +32,7 @@ PROGRESS_PREFIX = "@@GOV_PROGRESS "
 DEFAULTS = {
     "openai_base_url": "", "openai_api_key": "", "openai_model": "",
     "use_llm": True, "download_attachments": False, "browser_fallback": True,
+    "date_review_budget": None,
     "strict_mode": True, "verify_ssl": True, "allow_rule_fallback": False,
     "sleep_seconds": 0.5, "reduced_motion": False, "reduced_transparency": False,
 }
@@ -208,6 +209,11 @@ class DesktopController(Workspace):
                 continue
             if isinstance(default, bool):
                 result[key] = bool(data[key])
+            elif key == "date_review_budget":
+                value = data[key]
+                if value is not None and (type(value) not in (int, float) or not 0 <= value <= 2147483647 or int(value) != value):
+                    raise ValueError("日期复核请求上限必须是非负整数")
+                result[key] = None if value is None else int(value)
             elif key == "sleep_seconds":
                 value = float(data[key])
                 if not math.isfinite(value) or not 0 <= value <= 60:
@@ -430,6 +436,8 @@ class DesktopController(Workspace):
                 command += ["--resume-task", str(task_path), "--retry-mode", self._resume_request[1]]
             else:
                 command += ["--task-state", str(task_path)]
+                if config["date_review_budget"] is not None:
+                    command += ["--date-review-budget", str(config["date_review_budget"])]
                 if (options or {}).get("fresh_check"):
                     command.extend(("--no-cache", "--verify-dates"))
             if config["download_attachments"]:
@@ -627,6 +635,7 @@ class DesktopController(Workspace):
                               "已更新核查结果，继续处理中" if scanning else "先前待核查的记录已处理")
             return
         labels = {"content_unparsed":"正文未取得", "date_unverified":"发布日期不明确", "date_conflict":"日期线索冲突",
+                  "date_budget_exhausted":"日期复核请求已达上限",
                   "not_found":"页面不存在", "access_blocked":"访问受限", "browser_blocked":"浏览器请求受限",
                   "timeout":"请求超时", "rate_limited":"请求频率受限", "tls":"证书校验失败",
                   "llm_failed":"模型未完成判断", "llm":"模型未完成判断", "list":"栏目请求未成功",

@@ -35,6 +35,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--full-scan", action="store_true", help="维护模式：完整入口清单，不按日期停止翻页")
     p.add_argument("--no-cache", action="store_true", help="关闭正文和模型判断缓存，用于核对采集结果")
     p.add_argument("--verify-dates", action="store_true", help="对已发现的文章候选不只凭列表日期跳过，进一步核对详情")
+    p.add_argument("--date-review-budget", type=int, metavar="N", help="整次任务最多发送 N 次日期复核请求；默认不限，0 仅用缓存")
     p.add_argument("--cache-dir", type=str, default=None, help="跨日期范围共享的缓存目录，默认输出根目录下的 .cache")
     p.add_argument("--sleep", type=float, default=0.5, help="每次请求之间的间隔秒数")
     p.add_argument("--no-verify-ssl", action="store_true", help="关闭SSL证书校验，少数旧政府网站证书异常时可用")
@@ -48,7 +49,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--resume-task", type=Path, help="恢复已有任务的断点文件")
     p.add_argument("--retry-mode", choices=("resume", "failed", "llm"), default="resume")
     p.add_argument("--test-model", action="store_true", help="用虚构样例测试真实模型调用，可能产生少量费用")
-    return p.parse_args()
+    args = p.parse_args()
+    if args.date_review_budget is not None and args.date_review_budget < 0:
+        p.error("--date-review-budget 必须为非负整数")
+    return args
 
 
 def main() -> None:
@@ -89,6 +93,9 @@ def run_collection(args) -> None:
         raise ValueError("任务文件缺少元数据，不能恢复")
     manual_urls = read_manual_urls(args.manual_urls)
     if prior:
+        if args.date_review_budget is not None and args.date_review_budget != prior.get("date_review_budget"):
+            raise ValueError("恢复任务时不能修改日期复核请求上限；请新建任务")
+        args.date_review_budget = prior.get("date_review_budget")
         args.verify_dates = bool(prior.get("verify_dates", False))
         args.no_cache = args.no_cache or bool(prior.get("no_cache", False))
     out_dir = Path(prior["output_dir"]) if prior else Path(args.output_root) / f"{start:%Y-%m-%d}_至_{end:%Y-%m-%d}" / ("task-" + uuid.uuid4().hex[:12])
@@ -101,6 +108,8 @@ def run_collection(args) -> None:
                     manual_urls=manual_urls, output_dir=str(out_dir.absolute()))
     if args.verify_dates:
         metadata["verify_dates"] = True
+    if args.date_review_budget is not None:
+        metadata["date_review_budget"] = args.date_review_budget
     if (not prior and args.no_cache) or (prior and prior.get("no_cache")):
         metadata["no_cache"] = True
     task = TaskState(state_path, metadata)
@@ -112,7 +121,8 @@ def run_collection(args) -> None:
                "mode": args.retry_mode if prior else "new"}
     (attempt_dir / "started.json").write_text(json.dumps(attempt, indent=2), encoding="utf-8")
     if prior:
-        for filename in ("crawl_log.txt", "runtime_summary.json", "coverage_summary.json", "attachment_downloads.json"):
+        for filename in ("crawl_log.txt", "runtime_summary.json", "coverage_summary.json",
+                         "attachment_downloads.json", "historical_date_hints.json"):
             if (out_dir / filename).is_file():
                 shutil.copy2(out_dir / filename, attempt_dir / ("previous_" + filename))
     progress({"event": "task_ready", "path": str(state_path.absolute()), "summary": task.summary()})
@@ -140,6 +150,7 @@ def run_collection(args) -> None:
         use_cache=not args.no_cache,
         task_state=task,
         verify_dates=args.verify_dates,
+        date_review_budget=args.date_review_budget,
     )
 
     if args.retry_mode == "llm":
@@ -152,6 +163,9 @@ def run_collection(args) -> None:
         records.extend(crawler.crawl_manual_urls(manual_urls, start, end))
     records = task.records()
     coverage = task.summary()
+    history = [dict(source=s["name"], url=p["url"], title=p["title"], column=p["column"], reason=p["reason"])
+               for s in coverage["sources"] for p in s["issues"] if p["status"]=="historical_hint"]
+    (out_dir/"historical_date_hints.json").write_text(json.dumps(history,ensure_ascii=False,indent=2),encoding="utf-8")
     new_columns = [dict(source=name, url=url, **p) for name, url, p in task.rows("column_review")]
     (out_dir / "column_review.json").write_text(json.dumps(new_columns, ensure_ascii=False, indent=2), encoding="utf-8")
     attachment_candidates = [dict(source=name, url=url, title=p.get("item", {}).get("title", ""),

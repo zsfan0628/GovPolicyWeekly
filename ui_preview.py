@@ -331,7 +331,8 @@ class Workspace(QObject):
                 f"站点：{data.get('complete', 0)} 完成 · {data.get('partial', 0)} 部分失败 · "
                 f"{data.get('failed', 0)} 采集失败 · {data.get('pending', 0)} 未完成\n"
                 f"候选：{counts.get('included', 0)} 收录 · {counts.get('excluded', 0)} 排除 · "
-                f"{counts.get('llm_failed', 0)} 待复判 · {counts.get('detail_failed', 0)} 详情失败\n"
+                f"{counts.get('llm_failed', 0)} 待复判 · {counts.get('detail_failed', 0)} 详情异常或待核查 · "
+                f"{counts.get('historical_hint', 0)} 仅见期前日期线索\n"
                 f"非正文附件正常跳过 {counts.get('skipped_attachment', 0)} 个")
 
     @Property(bool, notify=changed)

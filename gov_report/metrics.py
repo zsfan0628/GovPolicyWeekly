@@ -16,12 +16,18 @@ class RunMetrics:
             return
         with self.lock:
             row = self.stages[payload["kind"]]
+            if payload.get("date_budget_skipped"):
+                row["date_budget_skipped"] = row.get("date_budget_skipped", 0) + 1
+                return
             row["count"] += 1
             row["seconds"] += max(0.0, float(payload.get("seconds", 0)))
             row["errors"] += int(bool(payload.get("error")))
             row["cache_hits"] += int(bool(payload.get("cache_hit")))
             if payload.get("deferred"):
                 row["deferred"] = row.get("deferred", 0) + 1
+            if payload.get("date_review"):
+                row["date_reviews"] = row.get("date_reviews",0)+1
+                row["date_verified"] = row.get("date_verified",0)+int(bool(payload.get("date_verified")))
 
     def snapshot(self):
         with self.lock:

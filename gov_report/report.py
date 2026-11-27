@@ -74,7 +74,7 @@ REPORT_COLUMNS = [
     "document_action",
     "llm_confidence",
     "llm_reason",
-    "personnel_stage", "industry_relevance", "date_source", "date_conflict", "date_uncertain", "attachment_note",
+    "personnel_stage", "industry_relevance", "date_source", "date_review_quote", "date_review_model", "date_conflict", "date_uncertain", "attachment_note",
 ]
 
 

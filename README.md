@@ -91,9 +91,11 @@ Daily collection uses policy/personnel core columns rather than the full audit i
 
 Attachment downloads start **off on every application launch**. Original attachment links remain in the report. When enabled, downloads run after PDF export, so the PDF can be opened without waiting for them. Article/model caches are shared across report date ranges. Recent articles are re-fetched; older snapshots may be reused for up to seven days. See [collection performance and verification](docs/crawl-performance.md) for the trade-offs and full-scan controls.
 
-Rules retain clear matches and reject clear non-target content. Ambiguous candidates are passed to the selected model. Without a model, ambiguous candidates are excluded unless rule fallback is explicitly enabled.
+Rules handle clear cases. The selected model can review uncertain classifications or disputed publication dates supported by dated excerpts. A model-selected date must match verifiable page evidence; content-rule fallback does not override the date requirement. Unconfirmed pre-period clues are listed separately in `historical_date_hints.json`.
 
 Model discovery does not verify generation. The client now negotiates Chat Completions / Responses and JSON output modes, and detects a website HTML response instead of reporting a generic JSON parse error. Failed calls are marked as **not reviewed**, not as model decisions to exclude. See [model connection checks](docs/model-connection.md).
+
+Date reviews have no fixed limit by default. To cap new date-review requests across all sites in one task, set the limit in the model settings or use `--date-review-budget N`. Cache hits are free of this limit; zero allows cached decisions only. Content classification requests are separate.
 
 ## Privacy and Local Settings
 

@@ -19,15 +19,14 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from .classifier import classify, contains_any, make_summary, extract_change_points, looks_like_project_eia_publicity
 from .cache import ArticleCache
 from .crawl_issues import NonHtmlContent, failure_details
-from .llm_classifier import LLMClassifier
-from .date_utils import fmt_date, in_range
+from .llm_classifier import DateRequestBudget, LLMClassifier, reviewable_date
+from .date_utils import fmt_date, in_range, parse_cn_date
 from .http import HttpClient, sanitize_filename
 from .metrics import RunMetrics
 from .pagination import DateWindow
 from .parser import (Article, LinkItem, is_attachment_url, has_document_headline, discover_channel_urls, extract_article, extract_links,
                      extract_pagination_urls, is_probably_article_url, clean_text, navigation_soup)
 from .scope import channel_allowed, column_name, core_urls
-
 
 class GovCrawler:
     def __init__(
@@ -52,6 +51,7 @@ class GovCrawler:
         use_cache: bool = True,
         task_state=None,
         verify_dates: bool = False,
+        date_review_budget: int | None = None,
     ) -> None:
         self.sources = sources
         self.task_state = task_state
@@ -98,6 +98,7 @@ class GovCrawler:
                 self.log(f"缓存不可用，本次重新读取网页: {type(error).__name__}")
         else:
             self.llm = LLMClassifier(enabled=use_llm, cache_enabled=False)
+        self.llm.date_budget = DateRequestBudget(date_review_budget, task_state)
 
     def progress(self, event: str, **data) -> None:
         payload = {"event": event, **data}
@@ -350,6 +351,8 @@ class GovCrawler:
                     if prior["dates"]:
                         item.date_reliable = len(prior["dates"]) == 1
                         item.list_date_conflict = not item.date_reliable
+                        if item.list_date_conflict:
+                            item.list_dates = tuple(sorted(fmt_date(d) for d in prior["dates"]))
                         item.publish_date = next(iter(prior["dates"])) if item.date_reliable else None
                     if self.max_detail_per_source > 0 and fetched >= self.max_detail_per_source:
                         self._scope_limited = True
@@ -428,10 +431,11 @@ class GovCrawler:
             self._skip_attachment(source, item, column)
             return None, 0
         saved = self.task_state.get("candidate", name, item.url) if self.task_state else self._memory_checkpoints.get((name, item.url))
-        if not reconsider and saved and saved.get("status") in {"included", "excluded", "out_of_range", "skipped_attachment"}:
+        if not reconsider and saved and saved.get("status") in {"included", "excluded", "out_of_range", "historical_hint", "skipped_attachment"}:
             return saved.get("record"), 0
         payload = dict(saved or {}, item={**asdict(item), "publish_date": item.publish_date.isoformat() if item.publish_date else None},
                        column=column, status="pending")
+        payload.pop("date_review",None)
         def checkpoint(status, **extra):
             if status != "included":
                 payload.pop("record", None)
@@ -448,7 +452,7 @@ class GovCrawler:
             elif status != "pending" and saved and saved.get("status") in {"detail_failed", "llm_failed"}:
                 self.progress("issue_resolved", source=name, url=item.url, kind="candidate")
         checkpoint("pending")
-        if not reconsider and not self.verify_dates and item.date_reliable and item.publish_date and not in_range(item.publish_date, start, end):
+        if not reconsider and not self.verify_dates and not (saved and saved.get("article")) and item.date_reliable and item.publish_date and not in_range(item.publish_date, start, end):
             checkpoint("out_of_range")
             return None, 0
         if looks_like_project_eia_publicity(item.title, "", url=item.url):
@@ -470,24 +474,56 @@ class GovCrawler:
             pub_date = item.publish_date if use_list else article.publish_date or item.publish_date
             date_source = "列表标注日期" if use_list else article.date_source if article.publish_date else "列表日期线索"
             weak_only = (weak or not article.publish_date) and not use_list
-            if item.list_date_conflict and (weak or not article.publish_date):
-                checkpoint("detail_failed", reason="多个栏目日期冲突，正文无明确发布日期", failure_kind="date_conflict")
-                return None, fetched
-            if weak_only and pub_date:
-                checkpoint("detail_failed", reason=f"仅有{date_source}（{fmt_date(pub_date)}），缺少明确发布日期，待核查", failure_kind="date_unverified")
-                return None, fetched
             conflict = bool(item.date_reliable and item.publish_date and article.publish_date and
                             item.publish_date.date() != article.publish_date.date())
-            if conflict and not in_range(pub_date, start, end) and in_range(item.publish_date, start, end):
-                checkpoint("detail_failed", failure_kind="date_conflict",
-                           reason=f"列表日期 {fmt_date(item.publish_date)} 与正文日期 {fmt_date(article.publish_date)} 跨统计区间，待核查")
-                return None, fetched
-            if pub_date is not None and not in_range(pub_date, start, end):
-                self.reject(source, item, article=article, reason="发布时间不在统计区间")
-                checkpoint("out_of_range")
-                return None, fetched
             body = clean_text(article.text)
             placeholder = body in {clean_text(article.title), "加载中", "正在加载", "请稍候", "访问受限", "页面不存在"}
+            rows = list(article.date_evidence)
+            if item.date_reliable and item.publish_date:
+                rows.append(dict(kind="列表标注日期",date=fmt_date(item.publish_date),quote=fmt_date(item.publish_date)))
+            elif item.list_date_conflict:
+                rows.extend(dict(kind="列表标注日期",date=d,quote=d) for d in item.list_dates)
+            boundary = conflict and not use_list and in_range(article.publish_date,start,end)!=in_range(item.publish_date,start,end)
+            corroborated = bool(item.date_reliable and not conflict and article.date_source=="标题栏发布日期")
+            meta_conflict = (not corroborated and pub_date and not use_list and
+                             any(r["kind"]=="发布元数据" and in_range(parse_cn_date(r["date"]),start,end)!=in_range(pub_date,start,end) for r in rows))
+            disputed_lists = item.list_date_conflict and (weak_only or not item.list_dates or
+                             any(in_range(parse_cn_date(d),start,end)!=in_range(pub_date,start,end) for d in item.list_dates))
+            ambiguous = boundary or meta_conflict or disputed_lists
+            review = {}
+            if weak_only or ambiguous:
+                dates = [parse_cn_date(r["date"]) for r in rows]+[item.publish_date,pub_date]
+                dates = [d for d in dates if d]
+                historical = not ambiguous and dates and all(d.date()<start.date() for d in dates)
+                reason = (f"列表日期 {fmt_date(item.publish_date)}、正文日期 {fmt_date(article.publish_date)}；日期证据冲突，待核查"
+                          if ambiguous else f"仅有{date_source}（{fmt_date(pub_date)}），缺少明确发布日期" if pub_date else "未识别发布日期")
+                kind = "date_conflict" if ambiguous else "date_unverified"
+                if historical and body and not placeholder:
+                    checkpoint("historical_hint",reason=reason+"；仅见期前线索，未确认为过期")
+                    return None,fetched
+                useful = (len(body)>=20 and not placeholder and any(in_range(d,start,end) for d in dates)
+                          and any(reviewable_date(row) for row in rows))
+                if useful and self.llm.is_available():
+                    review = self._review_candidate_date(name, article, rows)
+                    if review.get("budget_exhausted"):
+                        checkpoint("detail_failed", failure_kind="date_budget_exhausted", reason=reason+"；"+review["reason"])
+                        return None,fetched
+                    if not review.get("call_succeeded"):
+                        checkpoint("llm_failed",failure_kind="date_model_failed",reason="日期复核未完成："+review["reason"])
+                        return None,fetched
+                    if review.get("date"):
+                        pub_date=parse_cn_date(review["date"])
+                        date_source="模型复核网页发布日期"
+                        payload["date_review"]=review
+                    else:
+                        reason+="；模型未能提供可验证的发布日期引文"
+                if not review.get("date"):
+                    checkpoint("detail_failed",reason=reason,failure_kind=kind)
+                    return None,fetched
+            if pub_date is not None and not in_range(pub_date, start, end):
+                self.reject(source, item, article=article, reason="发布时间不在统计区间")
+                checkpoint("out_of_range",reason=f"{date_source} {fmt_date(pub_date)} 不在统计区间")
+                return None, fetched
             if pub_date is None or not body or placeholder:
                 reason = "未识别发布日期" if pub_date is None else "只有标题或占位提示，未取得有效正文" if placeholder else "未提取到正文"
                 checkpoint("detail_failed", reason=reason, failure_kind="date_unverified" if pub_date is None else "content_unparsed")
@@ -501,8 +537,12 @@ class GovCrawler:
                 checkpoint(decision.get("status", "excluded"), reason=decision.get("reason", ""))
                 return None, fetched
             record = self.article_to_record(source, article, pub_date, decision["cls"], llm_result=decision.get("llm_result"))
-            record.update(date_source=date_source, date_conflict=conflict or item.list_date_conflict,
+            record.update(date_source=date_source, date_conflict=conflict or item.list_date_conflict or
+                          any(r["kind"]=="发布元数据" and r["date"]!=fmt_date(pub_date) for r in rows),
                           article_date=fmt_date(article.publish_date), list_date=fmt_date(item.publish_date))
+            if review.get("date"):
+                record.update(date_review_model=review["model"], date_review_quote=review["quote"],
+                              date_review_from_cache=bool(review.get("from_cache")), llm_used=True)
             checkpoint("included", record=record)
             self.progress("record_included", source=name)
             self.log(f"命中: {fmt_date(pub_date)} | {record['category']} | {record['title']} | {record['url']} | 判定:{record.get('decision_source','')}")
@@ -516,6 +556,21 @@ class GovCrawler:
             checkpoint("detail_failed", **failure_details(error))
             self.log(f"详情页失败: {item.url} | {error}")
             return None, fetched
+
+    def _review_candidate_date(self, name, article, evidence):
+        with self._llm_semaphore, self.stage("llm", name, article.url) as stage:
+            review = self.llm.review_dates(article.title, evidence)
+            if review.get("budget_exhausted"):
+                stage["date_budget_skipped"] = True
+                return review
+            stage.update(date_review=True, date_verified=bool(review.get("date")),
+                         cache_hit=bool(review.get("from_cache")), deferred=bool(review.get("deferred")),
+                         error=not review.get("call_succeeded") and not review.get("deferred"))
+        self.llm_used_count += 1
+        self.llm_cache_hit_count += int(stage["cache_hit"])
+        outcome = review.get("date") or ("证据不足" if review.get("call_succeeded") else "调用未完成")
+        self.log(f"日期模型复核：{article.title} | {outcome} | {'缓存' if stage['cache_hit'] else '非缓存'}")
+        return review
 
     def _skip_attachment(self, source, item, column):
         key = (source['name'], item.url)
@@ -547,7 +602,7 @@ class GovCrawler:
     def should_fetch_candidate(self, item: LinkItem) -> bool:
         if re.sub(r"\s+", "", item.title) in {
             "政府信息公开指南", "政府信息公开制度", "政府信息公开年报", "政府信息公开年度报告",
-            "依申请公开", "网站地图", "隐私声明", "联系我们", "政府网站工作年度报表",
+            "依申请公开", "网站地图", "隐私声明", "联系我们", "政府网站工作年度报表", "图片", "政务服务",
         }:
             return False
         if is_attachment_url(item.url):
@@ -715,6 +770,8 @@ class GovCrawler:
         if "人事任免" in categories and not news_like:
             return "accept", "规则高置信：正式人事任免/任前公示/人选公示"
 
+        if re.search(r"中标|成交结果|招标公告|采购意向|合同公示|采购合同|合同协议书|竞争性磋商",title) or (news_like and formal_policy):
+            return "ambiguous", "需区分采购交易、新闻引用与正式政策"
         # v5.2：用户新口径——只要属于政策栏目且是正式文种（通知/函/决定/公告/公示等），
         # 就确定算政策文件，不需要 GPT。
         if formal_policy and in_policy_column and official_document_type:
@@ -786,7 +843,7 @@ class GovCrawler:
         if "人事任免" in cls.get("categories", []):
             if re.search(r"任前|拟任|人选公示|拟提拔", title):
                 personnel_stage = "拟任／公示，不等于已任命"
-            elif re.search(r"任免通知|职务任免|任命|免职", title):
+            elif re.search(r"任免通知|职务任免|任命|免职|同志(?:的)?(?:晋升职级|任职)", title):
                 personnel_stage = "任免文件，以原文决定为准"
             else:
                 personnel_stage = "任免阶段待核对"
@@ -877,14 +934,19 @@ class GovCrawler:
         summary = f"LLM调用候选数：{self.llm_used_count}，其中缓存命中：{self.llm_cache_hit_count}"
         statistics = self.llm_statistics()
         summary += (f"；成功复判：{statistics['success_count']}，调用失败：{statistics['failure_count']}，"
-                    f"暂停待复判：{statistics['deferred_count']}；模型生成 HTTP 请求：{statistics['http_request_count']}")
+                    f"暂停待复判：{statistics['deferred_count']}；其中日期复核 {statistics['date_review_count']} 次，"
+                    f"证据核验通过 {statistics['date_verified_count']} 次；模型生成 HTTP 请求：{statistics['http_request_count']}。"
+                    f"本任务日期请求累计 {self.llm.date_budget.used} 次（上限："
+                    f"{self.llm.date_budget.limit if self.llm.date_budget.limit is not None else '不限'}），"
+                    f"本轮因上限待核查 {statistics['date_budget_skipped']} 篇")
         (self.output_dir / "crawl_log.txt").write_text("\n".join([*self.logs, summary]), encoding="utf-8")
         if self.save_rejected:
             rejected = self.rejected
             if self.task_state:
                 rejected = [dict(source_name=name, candidate_title=p.get("item", {}).get("title", ""),
                                  article_title=p.get("article", {}).get("title", ""), url=url,
-                                 date=p.get("article", {}).get("publish_date") or p.get("item", {}).get("publish_date"),
+                                 date=p.get("date_review", {}).get("date") or p.get("article", {}).get("publish_date") or p.get("item", {}).get("publish_date"),
+                                 date_review_quote=p.get("date_review",{}).get("quote",""),
                                  status=p.get("status"), reason=p.get("reason") or "发布时间不在统计区间")
                             for name, url, p in self.task_state.rows("candidate")
                             if p.get("status") in {"excluded", "out_of_range", "llm_failed"}]
@@ -897,8 +959,11 @@ class GovCrawler:
         failures = stage.get("errors", 0)
         deferred = stage.get("deferred", 0)
         return {"candidate_count": self.llm_used_count,
+                "date_request_budget": self.llm.date_budget.limit, "date_request_used": self.llm.date_budget.used,
+                "date_budget_skipped": stage.get("date_budget_skipped", 0),
                 "success_count": max(0, self.llm_used_count - failures - deferred), "deferred_count": deferred,
                 "failure_count": failures, "cache_hit_count": self.llm_cache_hit_count,
+                "date_review_count": stage.get("date_reviews",0), "date_verified_count":stage.get("date_verified",0),
                 "http_request_count": self.llm.http_requests}
 
 

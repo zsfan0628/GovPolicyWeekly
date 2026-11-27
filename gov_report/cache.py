@@ -34,14 +34,15 @@ class ArticleCache:
             # Always re-fetch recent and undated documents, including corrections to recent articles.
             if published is None or now - published.timestamp() < 2 * 86400:
                 return None
-            return Article(item["title"], item["url"], published, item["text"], item["attachments"], item.get("date_source", ""))
+            return Article(item["title"], item["url"], published, item["text"], item["attachments"], item.get("date_source", ""), item["date_evidence"])
         except (KeyError, ValueError, TypeError):
             return None
 
     def put(self, key: str, article: Article, *, now: float | None = None) -> None:
         payload = json.dumps({"title": article.title, "url": article.url,
                               "published": article.publish_date.isoformat() if article.publish_date else None,
-                              "text": article.text, "attachments": article.attachments, "date_source": article.date_source}, ensure_ascii=False)
+                              "text": article.text, "attachments": article.attachments, "date_source": article.date_source,
+                              "date_evidence":article.date_evidence}, ensure_ascii=False)
         with self.lock, closing(sqlite3.connect(self.path)) as connection, connection:
             connection.execute("INSERT OR REPLACE INTO articles VALUES (?, ?, ?)",
                                (key, time.time() if now is None else now, payload))

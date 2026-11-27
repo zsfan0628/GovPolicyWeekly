@@ -1,21 +1,22 @@
-修复启动动画中文字先虚后清的问题。粒子从光点飞出，落下的笔画从形成时起即保持清晰。工作台保留珍珠灰与雾玫瑰配色。
+改进发布日期核查，并修复桌面导航按钮的双重轮廓。
 
 ## English
 
-- The cinematic opening writes “Welcome to Policy Weekly” with particles emitted from a single point, then forms the Chinese title. Settled strokes stay sharp throughout.
-- The desktop retains its light palette and the site-management map. The opening can be skipped or disabled with reduced motion. Collection and report formats are unchanged from v1.5.0.
+- Disputed publication dates can be checked against quoted page evidence. Unconfirmed historical clues are kept separate from inaccessible pages.
+- Model date reviews are unlimited by default. An optional task-wide request cap survives resume; cache hits do not consume it. Unresolved pages remain available for review.
+- Navigation now uses a single rounded selection background for mouse input and a matching keyboard focus outline.
 
 ## 简体中文
 
-- 黑底蓝金粒子写出「Welcome to Policy Weekly」，散成旋涡后聚成「政策周报」，刊名落到左上角。
-- 片头支持跳过及减少动态效果，站点管理地图保留。本次不改变采集流程和报告格式。
-- 使用 v1.5.0 安装版或便携版的用户可以在软件内检查更新，也可以手动下载对应版本。
+- 发布日期有争议时，可以让模型复核网页引文。未确认的历史线索与无法访问的页面分开记录。
+- 日期复核默认不限次数。可在“模型复判”中设置整次任务的请求上限；缓存命中不占次数，断点续跑保留已用次数。超出上限的文章保留待核查。
+- 导航按钮的选中底色与键盘焦点框统一圆角，鼠标点击不再叠加红框。
 
 ## Windows x64 downloads / 下载
 
 | File | Purpose / 用途 |
 | --- | --- |
-| `GovPolicyWeekly_Setup_1.5.1.exe` | Installer / 安装版 |
+| `GovPolicyWeekly_Setup_1.5.2.exe` | Installer / 安装版 |
 | `GovPolicyWeekly_windows_portable.zip` | Extract the entire folder before running / 便携版，完整解压后再运行 |
 | `GovPolicyWeekly_windows_source.zip` | Source and Windows build scripts / 源码与 Windows 构建脚本 |
 | `SHA256SUMS.txt` | Verify the three downloads / 三个下载包的 SHA-256 |

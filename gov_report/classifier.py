@@ -340,6 +340,8 @@ def looks_like_project_eia_publicity(title: str, text: str, url: str = "") -> bo
 
 def looks_like_personnel(title: str, text: str) -> bool:
     combined = f"{title}\n{text[:1200]}"
+    if re.search(r"关于.{1,64}同志(?:的)?(?:晋升职级|任职|免职|职务任免).{0,30}(?:通知|决定)$",title) and not re.search(r"培训|资格|条件|管理办法",title):
+        return True
     if any(k in combined for k in PERSONNEL_FALSE_POSITIVE_TERMS):
         # 标题本身是正式任免/公示时仍允许。
         if not any(k in title for k in PERSONNEL_TITLE_TERMS):
@@ -490,7 +492,7 @@ def classify(title: str, text: str, keywords: dict[str, list[str]], url: str = "
         if business_related and not is_bad_or_generic_title(title, source_name=source_name):
             categories.append("政策文件")
 
-    categories = unique_keep_order(categories)
+    categories = ["人事任免"] if personnel and "人事任免" in categories else unique_keep_order(categories)
     change_hits = matched_keywords(combined, keywords.get("change", []))
 
     return {

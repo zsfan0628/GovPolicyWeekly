@@ -76,6 +76,7 @@ ApplicationWindow {
             start_date: startDate.value, end_date: endDate.value,
             openai_base_url: apiUrl.text, openai_api_key: apiKey.text, openai_model: modelBox.currentText,
             use_llm: llmEnabled.checked, download_attachments: attachments.checked,
+            date_review_budget: limitDateRequests.checked ? dateRequestLimit.value : null,
             browser_fallback: browserFallback.checked, strict_mode: strictMode.checked,
             verify_ssl: verifySsl.checked, allow_rule_fallback: ruleFallback.checked,
             sleep_seconds: interval.value / 10, reduced_motion: root.reducedMotion,
@@ -98,6 +99,8 @@ ApplicationWindow {
         apiKey.text = s.openai_api_key || ""
         root.desiredModel = s.openai_model || ""
         llmEnabled.checked = s.use_llm === undefined ? true : s.use_llm
+        limitDateRequests.checked = s.date_review_budget !== undefined && s.date_review_budget !== null
+        if (limitDateRequests.checked) dateRequestLimit.value = s.date_review_budget
         attachments.checked = s.download_attachments === undefined ? false : s.download_attachments
         browserFallback.checked = s.browser_fallback === undefined ? true : s.browser_fallback
         strictMode.checked = s.strict_mode === undefined ? true : s.strict_mode
@@ -176,7 +179,7 @@ ApplicationWindow {
             color: preset.selected ? (preset.down ? Pearl.line : Pearl.soft)
                  : preset.down ? Pearl.line : preset.hovered ? Pearl.soft : "transparent"
             border.width: 1
-            border.color: preset.selected ? Pearl.frame : preset.activeFocus ? Pearl.accent : "transparent"
+            border.color: preset.visualFocus ? Pearl.accent : preset.selected ? Pearl.frame : "transparent"
             Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : 120 } }
         }
         onClicked: root.recentDays(days)
@@ -440,7 +443,22 @@ ApplicationWindow {
                                         Layout.fillWidth:true
                                         SmallLabel { text:"启用模型复判"; Layout.fillWidth:true }
                                         Toggle { id:llmEnabled; objectName:"llmEnabled"; checked:true; Accessible.name:"启用模型复判"; onCheckedChanged:root.queueSave()
-                                            ToolTip.visible:hovered; ToolTip.text:"只复核规则无法确定的候选文章，可能产生 API 费用" }
+                                            ToolTip.visible:hovered; ToolTip.text:"复核不明确的文章类别或发布日期；日期复核只发送标题及日期引文，可能产生 API 费用" }
+                                    }
+                                    RowLayout {
+                                        Layout.fillWidth: true; enabled: llmEnabled.checked
+                                        CheckControl {
+                                            id: limitDateRequests; objectName: "limitDateRequests"
+                                            text: "限制日期复核请求"; Layout.fillWidth: true
+                                            onCheckedChanged: root.queueSave()
+                                        }
+                                        SpinBox {
+                                            id: dateRequestLimit; objectName: "dateRequestLimit"
+                                            visible: limitDateRequests.checked; from: 0; to: 2147483647
+                                            value: 100; editable: true; Accessible.name: "整次任务日期复核请求上限"
+                                            onValueChanged: root.queueSave()
+                                        }
+                                        SmallLabel { text: limitDateRequests.checked ? "次／任务" : "不限" }
                                     }
                                     GridLayout {
                                         Layout.fillWidth: true; columns: 2; columnSpacing: 16; rowSpacing: 8
@@ -923,7 +941,7 @@ ApplicationWindow {
                     Text {
                         width: parent.width - 20; x: 10
                         visible: coverageDialog.expandedSource === modelData.name
-                        text: "收录 " + modelData.counts.included + " · 排除 " + modelData.counts.excluded + " · 日期范围外 " + modelData.counts.out_of_range + " · 待复判 " + modelData.counts.llm_failed + " · 详情失败 " + modelData.counts.detail_failed
+                        text: "收录 " + modelData.counts.included + " · 排除 " + modelData.counts.excluded + " · 日期范围外 " + modelData.counts.out_of_range + " · 待复判 " + modelData.counts.llm_failed + " · 详情待核查 " + modelData.counts.detail_failed + " · 期前线索 " + (modelData.counts.historical_hint || 0)
                         color: Pearl.muted; font.pixelSize: 12; wrapMode: Text.Wrap
                     }
                     Repeater {
@@ -939,7 +957,7 @@ ApplicationWindow {
                         delegate: Text {
                             required property var modelData
                             width: parent.width - 20; x: 10; font.pixelSize: 11; color: "#96612e"; wrapMode: Text.WrapAnywhere
-                            text: (modelData.title || "待处理文章") + " · " + ({llm_failed:"待复判",detail_failed:"详情失败",pending:"未完成"}[modelData.status] || modelData.status) + "\n" + modelData.url + "\n" + modelData.reason
+                            text: (modelData.title || "待处理文章") + " · " + ({historical_hint:"期前日期线索（未确认）",llm_failed:"待复判",detail_failed:"异常或待核查",pending:"未完成"}[modelData.status] || modelData.status) + "\n" + modelData.url + "\n" + modelData.reason
                         }
                     }
                     Rectangle { width: parent.width; height: 1; color: Pearl.line }

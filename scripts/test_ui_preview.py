@@ -5,6 +5,7 @@ import json
 import traceback
 
 from PySide6.QtCore import Q_ARG, QMetaObject, QObject, QPoint, QPointF, Qt
+from PySide6.QtQml import QQmlProperty
 from PySide6.QtTest import QTest
 
 
@@ -78,6 +79,20 @@ def run_checks(app, window, backend, sources, source_filter, artifacts, warnings
         click(find("nav0"))
         QTest.qWait(600)
         assert abs(lens.property("x") - initial_x) < 1
+        nav = find("nav0")
+        surface = nav.property("background")
+        assert surface.size() == lens.size()
+        assert surface.property("radius") == lens.property("radius") == lens.height() / 2
+        assert QQmlProperty.read(surface, "border.width") == 0
+        QTest.keyClick(window, Qt.Key_Tab)
+        assert find("nav1").hasActiveFocus()
+        QTest.keyClick(window, Qt.Key_Backtab)
+        assert nav.hasActiveFocus()
+        assert QQmlProperty.read(surface, "border.width") == 1
+        click(find("nav1"))
+        click(nav)
+        assert QQmlProperty.read(surface, "border.width") == 0
+        passed("Mouse navigation uses one pill; keyboard focus follows the same outline")
         window.setProperty("reducedTransparency", True)
         capture("11-reduced-transparency")
         assert window.property("reducedTransparency")

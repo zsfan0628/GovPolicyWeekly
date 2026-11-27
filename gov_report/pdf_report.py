@@ -183,9 +183,12 @@ class Layout:
         if not cov:
             return '未提供逐站完成记录，不能据此确认全部站点采集完整。'
         counts = cov.get('counts', {})
+        history = (f"仅见期前日期线索 {counts['historical_hint']} 条，未确认为过期，单列 historical_date_hints.json。\n"
+                   if counts.get('historical_hint') else "")
         return (f"站点：{cov.get('complete', 0)} 完成 / {cov.get('partial', 0)} 部分失败 / "
                 f"{cov.get('failed', 0)} 采集失败 / {cov.get('pending', 0)} 未完成。\n"
-                f"待模型复判 {counts.get('llm_failed', 0)} 条；详情失败 {counts.get('detail_failed', 0)} 条。\n"
+                f"待模型复判 {counts.get('llm_failed', 0)} 条；详情异常或待核查 {counts.get('detail_failed', 0)} 条。\n"
+                f"{history}"
                 f"非正文附件正常跳过 {counts.get('skipped_attachment', 0)} 个（不计为访问失败，未解析附件内容）。\n"
                 '完成仅指配置范围内没有已知失败，不代表覆盖网站所有历史内容。')
 
@@ -201,8 +204,12 @@ class Layout:
                   self.p('人事优先归类，避免重复计数；日期按各分类倒序排列。', 'small'), Spacer(1, 10),
                   self.box(self.p(self.coverage_notice(), 'small'), '#FAF5EA')]
         if self.issues:
+            failed = sum(i.get('status')=='failed' or
+                         i.get('failure_kind') in {'not_found','access_blocked','rate_limited','browser_blocked','timeout','tls','request_failed'}
+                         for i in self.issues)
             story += [Spacer(1, 8), self.p(
                 f'本次有 {len(self.issues)} 个页面访问异常或待核查，可能影响报告完整性。'
+                f'其中请求失败 {failed} 个，其他提取或覆盖待核查 {len(self.issues)-failed} 个。'
                 f'<a href="#access-issues" color="{BLUE}"><b>查看文末明细</b></a>。', 'small', True)]
         story += [
                   self.heading('信息清单', 'list'), self.p('编号定位详情，标题打开原文。', 'small'), Spacer(1, 5)]
@@ -256,6 +263,8 @@ class Layout:
                                + safe_text(r.get('title', '')), raw=True)
                 method = r.get('decision_source') or '未记录'
                 reason = r.get('llm_reason') or r.get('rule_reason') or '未记录具体判断理由。'
+                if r.get('date_review_quote'):
+                    reason += '；日期模型复核引文：'+r['date_review_quote']
                 story.append(KeepTogether([title, self.p('判定方式：' + str(method), 'small'),
                                            self.p(reason, 'small'), Spacer(1, 9)]))
         story += [self.heading('阅读说明'), self.p('摘要及变动提示来自采集结果，不等同于原文全文或人工核验。重复标题和完全重复片段仅在排版时去重，不补写缺失事实。模型是否参与以各条目的判定记录为准。', 'small')]

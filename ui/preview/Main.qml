@@ -9,9 +9,10 @@ ApplicationWindow {
     objectName: "previewWindow"
     width: 1280; height: 900
     minimumWidth: 1020; minimumHeight: 740
-    visible: true
+    // Never expose the native window until its first scene has been selected.
+    visible: settingsReady
     title: preview.isDemo ? "政策周报 · 界面预览" : "政策周报"
-    color: Pearl.paper
+    color: !settingsReady || (booting && reveal === 0) ? "#100f14" : Pearl.paper
     palette.window: Pearl.paper
     palette.windowText: Pearl.ink
     palette.text: Pearl.ink
@@ -37,7 +38,7 @@ ApplicationWindow {
     readonly property string serif: workspaceFonts.serif
     property real introProgress: 0
     readonly property int introDuration: 4800
-    readonly property real reveal: booting ? startup.workspaceReveal : 1
+    readonly property real reveal: !settingsReady ? 0 : booting ? startup.workspaceReveal : 1
     property bool booting: false
     property string toastText: ""
     property bool toastShown: false
@@ -106,8 +107,8 @@ ApplicationWindow {
         root.reducedMotion = s.reduced_motion || false
         root.reducedTransparency = !preview.shaderSupported || s.reduced_transparency || false
         selectSavedModel()
-        settingsReady = true
         replayIntro()
+        settingsReady = true
     }
     onReducedMotionChanged: { if (booting && reducedMotion) finishIntro(); queueSave() }
     onReducedTransparencyChanged: queueSave()

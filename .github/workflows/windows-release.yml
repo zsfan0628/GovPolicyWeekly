@@ -12,7 +12,7 @@ on:
       version:
         description: Release version (without the v prefix)
         required: true
-        default: '1.5.0'
+        default: '1.5.1'
       publish:
         description: Publish checked installer and portable downloads
         type: boolean
@@ -49,7 +49,7 @@ jobs:
         shell: pwsh
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-          REQUESTED_VERSION: ${{ inputs.version || '1.5.0' }}
+          REQUESTED_VERSION: ${{ inputs.version || '1.5.1' }}
           PYTHONUTF8: '1'
         run: |
           $version = $env:REQUESTED_VERSION
@@ -63,7 +63,7 @@ jobs:
           python -m scripts.test_site_map
           if ($LASTEXITCODE -ne 0) { throw 'Site map interaction checks failed' }
           python -m scripts.preview_map_intro
-          if ($LASTEXITCODE -ne 0) { throw 'Horizon calendar transition checks failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'Cinematic opening checks failed' }
           ./scripts/build_release.ps1 -Version $version
       - name: Verify portable and installer upgrades
         shell: pwsh
@@ -93,10 +93,12 @@ jobs:
             release-check/desktop-integration/checks.json
             release-check/desktop-integration/*.png
             release-check/site-map/*.png
-            release-check/world-mark/frames/009.png
-            release-check/world-mark/frames/043.png
-            release-check/world-mark/frames/059.png
-            release-check/world-mark/frames/089.png
+            release-check/world-mark/frames/025.png
+            release-check/world-mark/frames/050.png
+            release-check/world-mark/frames/095.png
+            release-check/world-mark/frames/133.png
+            release-check/world-mark/frames/163.png
+            release-check/world-mark/frames/210.png
           retention-days: 3
           if-no-files-found: ignore
 

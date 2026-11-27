@@ -73,7 +73,7 @@ def collect_paths(root: Path) -> list[Path]:
         paths.extend(path for path in (root / folder).rglob('*') if path.is_file()
                      and '__pycache__' not in path.parts and path.suffix in {'.py', '.ps1', '.yml', '.yaml', '.txt', '.md'})
     paths.extend(path for path in (root / 'ui' / 'preview').rglob('*') if path.is_file()
-                 and (path.suffix in {'.qml', '.js', '.qsb', '.frag', '.svg', '.jpg', '.md'} or path.name in {'LICENSE','intro-grain-world.png','intro-grain-neighbors.png','intro-grain-china.png','intro-grain-flow.png'}))
+                 and (path.suffix in {'.qml', '.js', '.qsb', '.frag', '.svg', '.jpg', '.md'} or path.name in {'LICENSE','cinema-word.png','cinema-ribbon.png','cinema-spiral.png'}))
     paths.extend(path for path in (root / 'assets' / 'fonts').glob('*')
                  if path.is_file() and path.suffix in {'.ttf', '.otf', '.txt', '.md'})
     return sorted(set(paths) - {root/'config'/'build-id.txt'})

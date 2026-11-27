@@ -566,12 +566,12 @@ class Preview(Workspace):
         self.timer.stop()
 
 
-def install_intro_guard(window, timeout_ms=2300):
+def install_intro_guard(window, timeout_ms=None):
     # The Qt GUI event loop remains live even if the frame-driven timeline stalls.
     guard = QTimer(window)
     guard.setObjectName("introWatchdog")
     guard.setSingleShot(True)
-    guard.setInterval(timeout_ms)
+    guard.setInterval(timeout_ms if timeout_ms is not None else window.property("introDuration")+600)
     def sync():
         if window.property("booting"):
             guard.start()
@@ -610,7 +610,7 @@ def launch_workspace(factory, smoke_check=None, artifacts=None):
     install_intro_guard(window)
     app.setApplicationDisplayName("政策周报 · 界面预览" if backend.isDemo else "政策周报")
     if smoke_check:
-        QTimer.singleShot(2200, lambda: smoke_check(app, window, backend, sources, source_filter, artifacts, errors))
+        QTimer.singleShot(window.property("introDuration")+200, lambda: smoke_check(app, window, backend, sources, source_filter, artifacts, errors))
     result = app.exec()
     backend.shutdown()
     controller = engine.incubationController()

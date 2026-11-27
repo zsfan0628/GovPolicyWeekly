@@ -24,15 +24,15 @@ Item {
     }
     Rectangle {
         anchors.fill: parent; radius: glass.radius
+        visible: glass.reducedTransparency || !glass.texture || glass.shaderFailed
         color: Pearl.paper
-        visible: glass.reducedTransparency || !glass.texture
         border.width: 1; border.color: "#ffffff"
     }
     ShaderEffect {
         id: material
         objectName: "glassShader"
         anchors.fill: parent
-        visible: !glass.reducedTransparency && glass.texture !== null
+        visible: !glass.reducedTransparency && glass.texture !== null && !glass.shaderFailed
         property var backdrop: glass.texture
         property vector2d surfaceSize: Qt.vector2d(width, height)
         property vector2d sceneSize: Qt.vector2d(glass.scene ? glass.scene.width : 1, glass.scene ? glass.scene.height : 1)

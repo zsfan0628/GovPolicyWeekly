@@ -29,7 +29,7 @@ Run `python desktop_app.py`, or double-click `WorkspacePreview.command` on macOS
 
 - The calendar highlights selected dates and shows the inclusive day count. Browse months within the range or open the latest local PDF by its date range.
 - Collapsible collection controls and a plain-language activity timeline with one row per site; searchable diagnostics remain available separately.
-- A silent 1.8-second opening moves from the world to China, whose grains form the Source Han Serif title and settle into the top-left navigation. Dates appear only in the workspace. Skip the intro or enable reduced motion for immediate entry.
+- In the 4.8-second opening, a point of light emits particles that land in the strokes of “Welcome to Policy Weekly”. The letters dissolve into a spiral and reform as the Chinese title. Skip the intro or enable reduced motion for immediate entry.
 - Calendar date selection, highlighted 7-day / 30-day presets, and searchable selection across 30 configured sites.
 - Real collection progress, filterable logs, stop controls and report history.
 - OpenAI-compatible model discovery and selection, with an optional rule-based fallback.

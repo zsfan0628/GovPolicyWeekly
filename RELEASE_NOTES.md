@@ -1,22 +1,21 @@
-# GovPolicyWeekly v1.5.0
+修复启动动画中文字先虚后清的问题。粒子从光点飞出，落下的笔画从形成时起即保持清晰。工作台保留珍珠灰与雾玫瑰配色。
 
 ## English
 
-- The new pearl-gray and dusty-rose desktop opens with a world map that zooms into China without hiding the surrounding geography. Skip the animation or enable reduced motion.
-- The collection calendar highlights the actual date range, including both endpoints. Open the latest local report by its dates instead of its week number.
-- Site-level activity is shown separately from detailed diagnostics. This release does not claim a measured improvement in live-site retrieval accuracy.
+- The cinematic opening writes “Welcome to Policy Weekly” with particles emitted from a single point, then forms the Chinese title. Settled strokes stay sharp throughout.
+- The desktop retains its light palette and the site-management map. The opening can be skipped or disabled with reduced motion. Collection and report formats are unchanged from v1.5.0.
 
 ## 简体中文
 
-- 桌面恢复珍珠灰与雾玫瑰配色。启动时从世界地图推近中国，保留周边陆地，再由细颗粒聚成「政策周报」。支持跳过及减少动态效果。
-- 月历高亮实际查询范围（含首尾），跨月翻页不会改变查询条件。「最近一期」按日期打开 PDF，不再显示周次。
-- 采集任务按站点展示动态，可切换查看技术明细。本次没有进行新旧版本真实网站命中率对照测试。
+- 黑底蓝金粒子写出「Welcome to Policy Weekly」，散成旋涡后聚成「政策周报」，刊名落到左上角。
+- 片头支持跳过及减少动态效果，站点管理地图保留。本次不改变采集流程和报告格式。
+- 使用 v1.5.0 安装版或便携版的用户可以在软件内检查更新，也可以手动下载对应版本。
 
 ## Windows x64 downloads / 下载
 
 | File | Purpose / 用途 |
 | --- | --- |
-| `GovPolicyWeekly_Setup_1.5.0.exe` | Installer / 安装版 |
+| `GovPolicyWeekly_Setup_1.5.1.exe` | Installer / 安装版 |
 | `GovPolicyWeekly_windows_portable.zip` | Extract the entire folder before running / 便携版，完整解压后再运行 |
 | `GovPolicyWeekly_windows_source.zip` | Source and Windows build scripts / 源码与 Windows 构建脚本 |
 | `SHA256SUMS.txt` | Verify the three downloads / 三个下载包的 SHA-256 |

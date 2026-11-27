@@ -33,10 +33,8 @@ class PublishSafetyTests(unittest.TestCase):
         self.assertTrue({'README.md', 'README.zh-CN.md', 'desktop_app.py', 'ui/preview/Main.qml'} <= names)
         self.assertTrue({'ui/preview/Pearl.js','ui/preview/HorizonCalendar.qml','ui/preview/DrawerHeading.qml'} <= names)
         self.assertIn('ui/preview/StartupScene.qml', names)
-        self.assertIn('ui/preview/assets/intro-grain-world.png', names)
-        self.assertIn('ui/preview/assets/intro-grain-neighbors.png', names)
-        self.assertIn('ui/preview/assets/intro-grain-china.png', names)
-        self.assertIn('ui/preview/assets/intro-grain-flow.png', names)
+        for asset in ('cinema-word.png','cinema-ribbon.png','cinema-spiral.png'):
+            self.assertIn('ui/preview/assets/'+asset, names)
         self.assertNotIn('ui/preview/ParticleStencils.js', names)
         self.assertTrue({'assets/fonts/SourceHanSerifCN-SemiBold.otf', 'assets/fonts/LICENSE-Serif.txt',
                          'gov_report/ui_fonts.py'} <= names)

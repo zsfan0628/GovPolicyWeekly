@@ -36,7 +36,7 @@ ApplicationWindow {
     function toggleDrawer(key) { drawer = drawer === key ? "" : key }
     readonly property string serif: workspaceFonts.serif
     property real introProgress: 0
-    readonly property int introDuration: 1800
+    readonly property int introDuration: 4800
     readonly property real reveal: booting ? startup.workspaceReveal : 1
     property bool booting: false
     property string toastText: ""
@@ -211,7 +211,7 @@ ApplicationWindow {
                 }
                 ColumnLayout {
                     spacing: 2
-                    Text { id: brandTitle; objectName: "brandTitle"; text: "政策周报"; color: Pearl.ink; font.family:root.serif; font.pixelSize: 23; font.weight: Font.DemiBold; opacity:root.booting ? 0 : 1 }
+                    Text { id: brandTitle; objectName: "brandTitle"; text: "政策周报"; color: Pearl.ink; font.family:root.serif; font.pixelSize: 23; font.weight: Font.DemiBold; opacity:root.booting ? startup.handoff : 1 }
                 }
             }
             Loader {

@@ -49,15 +49,16 @@ under ISC. See `icons/LICENSE`.
 
 The desktop app has a single palette and horizontal navigation. The month calendar highlights the selected range and displays its inclusive day count. Browsing into another selected month does not change the range. The configuration drawers reuse the real model and collection settings. During collection the calendar gives way to the live inspector; task recovery remains available afterwards.
 
-The silent 1.8-second opening zooms from the world to China on one dot grid, keeps its neighbors in view,
-then gathers its grains into the Source Han Serif wordmark and docks it onto the navigation
-label. The 2256-pixel China still and the motion atlas share the same grain positions.
-Generate the assets offline with `python -m scripts.build_intro_grain`; the desktop
+The silent 4.8-second opening emits particles from one fixed point. Each landing deposits
+a piece of “Welcome to Policy Weekly” on an ink background. The animation then
+turns samples of the same letters into a luminous spiral, and settles the Chinese
+wordmark onto the live navigation label. Settled strokes are drawn at 4x resolution from their first appearance, independently of the lower-resolution particle glow. The dark cinematic palette is confined to the opening.
+Generate the assets offline with `python -m scripts.build_cinematic_intro`; the desktop
 does not draw individual particles each frame. Site management keeps its interactive map.
 The intro never reads task dates. Replay from Settings; click Skip or
 press Escape for immediate entry.
 Reduced motion bypasses the timeline. The GUI event loop also dismisses a
-stalled intro after 2.3 seconds, independently of the animation frame clock.
+stalled intro 600 ms beyond the planned duration, independently of the animation frame clock.
 Reduced transparency uses opaque surfaces; the software renderer selects that
 fallback automatically. No background animation continues after startup.
 

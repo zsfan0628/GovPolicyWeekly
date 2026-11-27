@@ -32,7 +32,11 @@ def capture(app, window, backend, sources, source_filter, artifacts, warnings):
         QMetaObject.invokeMethod(window,'finishIntro'); QTest.qWait(80)
         a=before.copy(*region)
         b=window.grabWindow().copy(*region)
-        assert sum(a.pixel(x,y)!=b.pixel(x,y) for x in range(a.width()) for y in range(a.height())) <= .02*a.width()*a.height()
+        mismatch=sum(a.pixel(x,y)!=b.pixel(x,y) for x in range(a.width()) for y in range(a.height()))
+        if mismatch>.02*a.width()*a.height():
+            a.save(str(artifacts.parent/'dock-before.png'))
+            b.save(str(artifacts.parent/'dock-after.png'))
+            raise AssertionError(f'Brand handoff changed {mismatch} pixels in {region}')
 
     try:
         artifacts.mkdir(parents=True, exist_ok=True)
@@ -46,7 +50,7 @@ def capture(app, window, backend, sources, source_filter, artifacts, warnings):
         QTest.mouseMove(window,QPoint(4,4))
         samples = []
         frames = round(window.property('introDuration') * 60 / 1000)
-        assert 60 <= frames <= 108
+        assert frames==288
         for frame in range(frames):
             pose(frame/(frames-1))
             shot = window.grabWindow().scaledToWidth(960,Qt.SmoothTransformation)
@@ -54,27 +58,44 @@ def capture(app, window, backend, sources, source_filter, artifacts, warnings):
             if frame in (9,35,59,frames-1):
                 samples.append(shot)
         assert all(a!=b for a,b in zip(samples,samples[1:]))
-        pose(.12)
-        world,flow = find('introGrainWorld'),find('introGrainFlow')
-        assert find('introWorldWide').property('sourceSize').width()==2256 and world.isVisible() and world.opacity()==1
-        assert flow.opacity()==0 and flow.property('sourceSize').width()==3760
-        assert window.grabWindow().save(str(artifacts.parent/'map-native.png'))
+        assert find('introCamera') is None
+        stage=find('welcomeSweep')
+        def lit(x,y,w,h):
+            shot=window.grabWindow()
+            dpr=shot.width()/window.width()
+            a=stage.mapToScene(QPointF(x,y)); b=stage.mapToScene(QPointF(x+w,y+h))
+            return sum(shot.pixelColor(i,j).lightness()>48
+                       for i in range(round(a.x()*dpr),round(b.x()*dpr),2)
+                       for j in range(round(a.y()*dpr),round(b.y()*dpr),2))
+        pose(.026)
+        assert lit(25,141,14,14)>0 and lit(44,96,456,44)==0
+        pose(.22)
+        assert find('introRibbon').isVisible() and find('welcomeInk').isVisible()
+        assert lit(44,98,70,40)>50 and lit(468,98,32,40)==0
         pose(.40)
-        china,camera = find('introGrainChina'),find('introCamera')
-        assert world.isVisible() and world.opacity()==1 and china.opacity()==1 and flow.opacity()==0
-        assert find('introWorldClose').opacity()==1 and find('introWorldClose').property('sourceSize').width()==2256
-        assert china.property('sourceSize').width()==2256 and abs(camera.scale()-2.12)<.01
-        focus = window.grabWindow()
-        assert focus.save(str(artifacts.parent/'china-native.png'))
-        # Actual map ink must remain visible west of China, even outside the original tile.
-        small = focus.scaledToWidth(960,Qt.SmoothTransformation)
-        assert sum(small.pixelColor(x,y).red()<237 for x in range(15,90)
-                   for y in range(small.height()//4,small.height()//2))>15
-        pose(.60)
-        assert 0<world.opacity()<1 and not china.isVisible() and flow.isVisible() and 0<flow.property('frame')<29
-        pose(.79)
-        assert not flow.isVisible() and find('introTitle').opacity()==1
+        assert find('welcomeWord').property('text')=='Welcome to Policy Weekly'
+        assert find('welcomeInk').width()==456
+        settled=window.grabWindow()
+        q=stage.mapToScene(QPointF(44,98))
+        dpi=settled.width()/window.width()
+        left=(round(q.x()*dpi),round(q.y()*dpi),round(130*dpi),round(39*dpi))
+        pose(.30)  # The first letters have landed but the phrase is still forming.
+        assert window.grabWindow().copy(*left)==settled.copy(*left), 'Settled strokes changed sharpness'
+        pose(.465)
+        assert 0<find('welcomeInk').width()<456
+        pose(.62)
+        spiral=find('introSpiral')
+        assert spiral.isVisible() and 0<spiral.property('frame')<83 and find('welcomeInk').width()==0
+        assert spiral.property('sourceSize').width()==3808
+        pose(.83)
+        assert not spiral.isVisible() and find('introTitle').opacity()==1
+        pose(.91)
+        iris=window.grabWindow()
+        assert iris.pixelColor(8,8).lightness()<35
+        center=iris.pixelColor(iris.width()//2,iris.height()//2)
         check_dock()
+        final=window.grabWindow()
+        assert center==final.pixelColor(final.width()//2,final.height()//2)
         assert window.grabWindow().scaledToWidth(960,Qt.SmoothTransformation).save(str(artifacts/f'{frames:03d}.png'))
         for w,h in ((1020,740),(1440,960)):
             window.setProperty('booting',True)
@@ -82,7 +103,7 @@ def capture(app, window, backend, sources, source_filter, artifacts, warnings):
             window.resize(w,h)
             QTest.qWait(160)
             find('startDate').setProperty('value','2026-11-16')
-            pose(.52)
+            pose(.62)
             QTest.qWait(80)
             reference=window.grabWindow()
             find('startDate').setProperty('value','2026-10-24')
@@ -111,7 +132,7 @@ def capture(app, window, backend, sources, source_filter, artifacts, warnings):
         QMetaObject.invokeMethod(window,'replayIntro')
         assert not window.property('booting')
         assert not warnings,warnings
-        print("PASS: single grain map and title morph, date independence, brand handoff at 3 widths, stalled-intro recovery, Escape and reduced motion")
+        print("PASS: greeting, spiral, date independence, brand handoff at 3 widths, stalled-intro recovery, Escape and reduced motion")
         app.exit(0)
     except Exception:
         traceback.print_exc()
